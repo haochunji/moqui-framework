@@ -20,6 +20,7 @@ import org.moqui.entity.EntityFind
 import org.moqui.entity.EntityValue
 import org.moqui.impl.context.ExecutionContextImpl
 import org.moqui.util.MNode
+import org.moqui.util.StringUtilities
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -46,7 +47,10 @@ class EntityEcaRule {
         }
         // prep actions
         if (eecaNode.hasChild("actions")) {
-            actions = new XmlAction(ecfi, eecaNode.first("actions"), null) // was location + ".actions" but not unique!
+            String actionsLocation = null
+            String eecaId = eecaNode.attribute("id")
+            if (eecaId != null && !eecaId.isEmpty()) actionsLocation = eecaId + "_" + StringUtilities.getRandomString(8)
+            actions = new XmlAction(ecfi, eecaNode.first("actions"), actionsLocation) // was location + ".actions" but not unique!
         }
     }
 
@@ -113,7 +117,8 @@ class EntityEcaRule {
         }
 
         try {
-            ec.contextStack.push()
+            Map<String, Object> contextMap = new HashMap<>()
+            ec.contextStack.push(contextMap)
             ec.contextStack.putAll(fieldValues)
             ec.contextStack.put("entityValue", fieldValues)
             ec.contextStack.put("originalValue", originalValue)
@@ -121,9 +126,29 @@ class EntityEcaRule {
 
             // run the condition and if passes run the actions
             boolean conditionPassed = true
-            if (condition) conditionPassed = condition.checkCondition(ec)
-            if (conditionPassed) {
-                if (actions) actions.run(ec)
+            if (condition != null) conditionPassed = condition.checkCondition(ec)
+            if (conditionPassed && actions != null) {
+                Object result = actions.run(ec)
+
+                // if anything was set in the context that matches a field name set it on the EntityValue
+                if ("true".equals(eecaNode.attribute("set-results"))) {
+                    Map resultMap
+                    if (result instanceof Map) {
+                        resultMap = (Map<String, Object>) result
+                    } else {
+                        resultMap = contextMap
+                    }
+
+                    if (resultMap != null && resultMap.size() > 0) {
+                        EntityDefinition ed = ecfi.entityFacade.getEntityDefinition(entityName)
+                        ArrayList<String> fieldNames = ed.getNonPkFieldNames()
+                        int fieldNamesSize = fieldNames.size()
+                        for (int i = 0; i < fieldNamesSize; i++) {
+                            String fieldName = (String) fieldNames.get(i)
+                            if (resultMap.containsKey(fieldName)) fieldValues.put(fieldName, resultMap.get(fieldName))
+                        }
+                    }
+                }
             }
         } finally {
             ec.contextStack.pop()

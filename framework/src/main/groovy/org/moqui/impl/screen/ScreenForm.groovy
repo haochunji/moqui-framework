@@ -41,9 +41,9 @@ import java.sql.Timestamp
 class ScreenForm {
     protected final static Logger logger = LoggerFactory.getLogger(ScreenForm.class)
 
-    protected static final Set<String> fieldAttributeNames = new HashSet<String>(["name", "from", "entry-name", "hide",
+    protected static final Set<String> fieldAttributeNames = new HashSet<String>(["name", "from", "entry-name", "hide"])
+    protected static final Set<String> subFieldAttributeNames = new HashSet<String>(["title", "tooltip", "red-when",
             "validate-service", "validate-parameter", "validate-entity", "validate-field"])
-    protected static final Set<String> subFieldAttributeNames = new HashSet<String>(["title", "tooltip", "red-when"])
 
     protected ExecutionContextFactoryImpl ecfi
     protected ScreenDefinition sd
@@ -187,33 +187,11 @@ class ScreenForm {
         mergeFormNodes(newFormNode, baseFormNode, false, false)
 
         // populate validate-service and validate-entity attributes if the target transition calls a single service
-        if (newFormNode.attribute("transition")) {
-            TransitionItem ti = this.sd.getTransitionItem(newFormNode.attribute("transition"), null)
-            if (ti != null && ti.getSingleServiceName()) {
-                String singleServiceName = ti.getSingleServiceName()
-                ServiceDefinition sd = ecfi.serviceFacade.getServiceDefinition(singleServiceName)
-                if (sd != null) {
-                    ArrayList<String> inParamNames = sd.getInParameterNames()
-                    for (MNode fieldNode in newFormNode.children("field")) {
-                        // if the field matches an in-parameter name and does not already have a validate-service, then set it
-                        // do it even if it has a validate-service since it might be from another form, in general we want the current service:  && !fieldNode."@validate-service"
-                        if (inParamNames.contains(fieldNode.attribute("name"))) {
-                            fieldNode.attributes.put("validate-service", singleServiceName)
-                        }
-                    }
-                } else if (ecfi.serviceFacade.isEntityAutoPattern(singleServiceName)) {
-                    String entityName = ServiceDefinition.getNounFromName(singleServiceName)
-                    EntityDefinition ed = ecfi.entityFacade.getEntityDefinition(entityName)
-                    ArrayList<String> fieldNames = ed.getAllFieldNames()
-                    for (MNode fieldNode in newFormNode.children("field")) {
-                        // if the field matches an in-parameter name and does not already have a validate-entity, then set it
-                        if (fieldNames.contains(fieldNode.attribute("name")) && !fieldNode.attribute("validate-entity")) {
-                            fieldNode.attributes.put("validate-entity", entityName)
-                        }
-                    }
-                }
-            }
-        }
+        setSubFieldValidateAttrs(newFormNode, "transition", "default-field")
+        setSubFieldValidateAttrs(newFormNode, "transition", "conditional-field")
+        setSubFieldValidateAttrs(newFormNode, "transition-first-row", "first-row-field")
+        setSubFieldValidateAttrs(newFormNode, "transition-second-row", "second-row-field")
+        setSubFieldValidateAttrs(newFormNode, "transition-last-row", "last-row-field")
 
         // check form-single.field-layout and add ONLY hidden fields that are missing
         MNode fieldLayoutNode = newFormNode.first("field-layout")
@@ -231,6 +209,38 @@ class ScreenForm {
         entityFindNode = newFormNode.first("entity-find")
         // prep row-actions
         if (newFormNode.hasChild("row-actions")) rowActions = new XmlAction(ecfi, newFormNode.first("row-actions"), location + ".row_actions")
+    }
+
+    void setSubFieldValidateAttrs(MNode newFormNode, String transitionAttribute, String subFieldNodeName) {
+        if (newFormNode.attribute(transitionAttribute)) {
+            TransitionItem ti = this.sd.getTransitionItem(newFormNode.attribute(transitionAttribute), null)
+            if (ti != null && ti.getSingleServiceName()) {
+                String singleServiceName = ti.getSingleServiceName()
+                ServiceDefinition sd = ecfi.serviceFacade.getServiceDefinition(singleServiceName)
+                if (sd != null) {
+                    ArrayList<String> inParamNames = sd.getInParameterNames()
+                    for (MNode fieldNode in newFormNode.children("field")) {
+                        // if the field matches an in-parameter name and does not already have a validate-service, then set it
+                        // do it even if it has a validate-service since it might be from another form, in general we want the current service:  && !fieldNode."@validate-service"
+                        if (inParamNames.contains(fieldNode.attribute("name"))) {
+                            for (MNode subField in fieldNode.children(subFieldNodeName))
+                                if (!subField.attribute("validate-service")) subField.attributes.put("validate-service", singleServiceName)
+                        }
+                    }
+                } else if (ecfi.serviceFacade.isEntityAutoPattern(singleServiceName)) {
+                    String entityName = ServiceDefinition.getNounFromName(singleServiceName)
+                    EntityDefinition ed = ecfi.entityFacade.getEntityDefinition(entityName)
+                    ArrayList<String> fieldNames = ed.getAllFieldNames()
+                    for (MNode fieldNode in newFormNode.children("field")) {
+                        // if the field matches an in-parameter name and does not already have a validate-entity, then set it
+                        if (fieldNames.contains(fieldNode.attribute("name"))) {
+                            for (MNode subField in fieldNode.children(subFieldNodeName))
+                                if (!subField.attribute("validate-entity")) subField.attributes.put("validate-entity", entityName)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     List<MNode> getDbFormNodeList() {
@@ -389,8 +399,10 @@ class ScreenForm {
             if (fn.attribute("name") in ["aen", "den", "lastUpdatedStamp"]) {
                 outNode.children.remove(i)
             } else {
-                fn.attributes.remove("validate-entity")
-                fn.attributes.remove("validate-field")
+                for (MNode subFn in fn.getChildren()) {
+                    subFn.attributes.remove("validate-entity")
+                    subFn.attributes.remove("validate-field")
+                }
                 i++
             }
         }
@@ -526,9 +538,8 @@ class ScreenForm {
         for (MNode parameterNode in parameterNodes) {
             String parameterName = parameterNode.attribute("name")
             if ((excludes != null && excludes.contains(parameterName)) || "lastUpdatedStamp".equals(parameterName)) continue
-            MNode newFieldNode = new MNode("field", [name:parameterName, "validate-service":sd.serviceName,
-                                                     "validate-parameter":parameterName])
-            MNode subFieldNode = newFieldNode.append("default-field", null)
+            MNode newFieldNode = new MNode("field", [name:parameterName])
+            MNode subFieldNode = newFieldNode.append("default-field", ["validate-service":sd.serviceName, "validate-parameter":parameterName])
             addAutoServiceField(nounEd, parameterNode, fieldType, serviceVerb, newFieldNode, subFieldNode, baseFormNode)
             mergeFieldNode(baseFormNode, newFieldNode, false)
         }
@@ -552,8 +563,8 @@ class ScreenForm {
                 makeDefaultField = displayField == null || displayField.booleanValue()
             }
 
-            MNode newFieldNode = new MNode("field", [name:fieldName, "validate-entity":ed.getFullEntityName(), "validate-field":fieldName])
-            MNode subFieldNode = makeDefaultField ? newFieldNode.append("default-field", null) : null
+            MNode newFieldNode = new MNode("field", [name:fieldName])
+            MNode subFieldNode = makeDefaultField ? newFieldNode.append("default-field", ["validate-entity":ed.getFullEntityName(), "validate-field":fieldName]) : null
 
             addAutoEntityField(ed, fieldName, fieldType, newFieldNode, subFieldNode, baseFormNode)
 
@@ -582,6 +593,7 @@ class ScreenForm {
                 oneRelKeyMap = km
                 relatedEntityName = relEntityName
                 relatedEd = relEd
+                break
             }
         }
         String keyField = (String) oneRelKeyMap?.keySet()?.iterator()?.next()
@@ -783,6 +795,7 @@ class ScreenForm {
     protected void expandFieldNode(MNode baseFormNode, MNode fieldNode) {
         if (fieldNode.hasChild("header-field")) expandFieldSubNode(baseFormNode, fieldNode, fieldNode.first("header-field"))
         if (fieldNode.hasChild("first-row-field")) expandFieldSubNode(baseFormNode, fieldNode, fieldNode.first("first-row-field"))
+        if (fieldNode.hasChild("second-row-field")) expandFieldSubNode(baseFormNode, fieldNode, fieldNode.first("second-row-field"))
         for (MNode conditionalFieldNode in fieldNode.children("conditional-field"))
             expandFieldSubNode(baseFormNode, fieldNode, conditionalFieldNode)
         if (fieldNode.hasChild("default-field")) expandFieldSubNode(baseFormNode, fieldNode, fieldNode.first("default-field"))
@@ -889,11 +902,15 @@ class ScreenForm {
             MNode baseRowActionsNode = baseFormNode.first("row-actions")
             for (MNode actionNode in overrideFormNode.first("row-actions").children) baseRowActionsNode.append(actionNode)
         }
+        if (overrideFormNode.hasChild("hidden-parameters")) {
+            int hpIndex = baseFormNode.firstIndex("hidden-parameters")
+            if (hpIndex >= 0) baseFormNode.replace(hpIndex, overrideFormNode.first("hidden-parameters"))
+            else baseFormNode.append(overrideFormNode.first("hidden-parameters"))
+        }
 
         if (copyFields) {
-            for (MNode overrideFieldNode in overrideFormNode.children("field")) {
+            for (MNode overrideFieldNode in overrideFormNode.children("field"))
                 mergeFieldNode(baseFormNode, overrideFieldNode, deepCopy)
-            }
         }
 
         if (overrideFormNode.hasChild("field-layout")) {
@@ -916,6 +933,7 @@ class ScreenForm {
 
             baseFieldNode.mergeSingleChild(overrideFieldNode, "header-field")
             baseFieldNode.mergeSingleChild(overrideFieldNode, "first-row-field")
+            baseFieldNode.mergeSingleChild(overrideFieldNode, "second-row-field")
             baseFieldNode.mergeChildrenByKey(overrideFieldNode, "conditional-field", "condition", null)
             baseFieldNode.mergeSingleChild(overrideFieldNode, "default-field")
             baseFieldNode.mergeSingleChild(overrideFieldNode, "last-row-field")
@@ -1007,7 +1025,7 @@ class ScreenForm {
                                 addFieldOption(options, fieldNode, childNode, [entry:listOption], ec)
                             } else {
                                 String loString = ObjectUtilities.toPlainString(listOption)
-                                if (loString != null) options.put(loString, loString)
+                                if (loString != null) options.put(loString, ec.l10n.localize(loString))
                             }
                         }
                     }
@@ -1015,7 +1033,7 @@ class ScreenForm {
             } else if ("option".equals(childNode.name)) {
                 String key = ec.resource.expandNoL10n(childNode.attribute('key'), null)
                 String text = ec.resource.expand(childNode.attribute('text'), null)
-                options.put(key, text ?: key)
+                options.put(key, text ?: ec.l10n.localize(key))
             }
         }
         return options
@@ -1047,13 +1065,13 @@ class ScreenForm {
             if (text == null || text.length() == 0) {
                 if (listOptionEvb == null || listOptionEvb.getEntityDefinition().isField("description")) {
                     Object desc = listOption.get("description")
-                    options.put(key, desc != null ? (String) desc : key)
+                    options.put(key, desc != null ? (String) desc : ec.l10n.localize(key))
                 } else {
-                    options.put(key, key)
+                    options.put(key, ec.l10n.localize(key))
                 }
             } else {
                 String value = ec.resource.expand(text, null)
-                if ("null".equals(value)) value = key
+                if ("null".equals(value)) value = ec.l10n.localize(key)
                 options.put(key, value)
             }
         } finally {
@@ -1088,14 +1106,17 @@ class ScreenForm {
         private boolean isUploadForm = false
         private boolean isFormHeaderFormVal = false
         private boolean isFormFirstRowFormVal = false
+        private boolean isFormSecondRowFormVal = false
         private boolean isFormLastRowFormVal = false
         private boolean hasFirstRow = false
+        private boolean hasSecondRow = false
         private boolean hasLastRow = false
         private ArrayList<MNode> nonReferencedFieldList = (ArrayList<MNode>) null
         private ArrayList<MNode> hiddenFieldList = (ArrayList<MNode>) null
         private ArrayList<String> hiddenFieldNameList = (ArrayList<String>) null
         private ArrayList<MNode> hiddenHeaderFieldList = (ArrayList<MNode>) null
         private ArrayList<MNode> hiddenFirstRowFieldList = (ArrayList<MNode>) null
+        private ArrayList<MNode> hiddenSecondRowFieldList = (ArrayList<MNode>) null
         private ArrayList<MNode> hiddenLastRowFieldList = (ArrayList<MNode>) null
         private ArrayList<ArrayList<MNode>> formListColInfoList = (ArrayList<ArrayList<MNode>>) null
         private boolean hasFieldHideAttrs = false
@@ -1125,6 +1146,7 @@ class ScreenForm {
                 hiddenFieldNameList = new ArrayList<>()
                 hiddenHeaderFieldList = new ArrayList<>()
                 hiddenFirstRowFieldList = new ArrayList<>()
+                hiddenSecondRowFieldList = new ArrayList<>()
                 hiddenLastRowFieldList = new ArrayList<>()
             }
 
@@ -1146,6 +1168,8 @@ class ScreenForm {
                     if (headerField != null && headerField.hasChild("hidden")) hiddenHeaderFieldList.add(fieldNode)
                     MNode firstRowField = fieldNode.first("first-row-field")
                     if (firstRowField != null && firstRowField.hasChild("hidden")) hiddenFirstRowFieldList.add(fieldNode)
+                    MNode secondRowField = fieldNode.first("second-row-field")
+                    if (secondRowField != null && secondRowField.hasChild("hidden")) hiddenSecondRowFieldList.add(fieldNode)
                     MNode lastRowField = fieldNode.first("last-row-field")
                     if (lastRowField != null && lastRowField.hasChild("hidden")) hiddenLastRowFieldList.add(fieldNode)
 
@@ -1217,6 +1241,9 @@ class ScreenForm {
             for (MNode rfNode in formNode.depthFirst({ MNode it -> "first-row-field".equals(it.name) })) {
                 if (rfNode.children.size() > 0) { hasFirstRow = true; break } }
             if (hasFirstRow && formNode.attribute("transition-first-row")) isFormFirstRowFormVal = true
+            for (MNode rfNode in formNode.depthFirst({ MNode it -> "second-row-field".equals(it.name) })) {
+                if (rfNode.children.size() > 0) { hasSecondRow = true; break } }
+            if (hasSecondRow && formNode.attribute("transition-second-row")) isFormSecondRowFormVal = true
             for (MNode rfNode in formNode.depthFirst({ MNode it -> "last-row-field".equals(it.name) })) {
                 if (rfNode.children.size() > 0) { hasLastRow = true; break } }
             if (hasLastRow && formNode.attribute("transition-last-row")) isFormLastRowFormVal = true
@@ -1233,26 +1260,26 @@ class ScreenForm {
         boolean isList() { isListForm }
         boolean isServerStatic(String renderMode) { return serverStatic != null && (serverStatic.contains('all') || serverStatic.contains(renderMode)) }
 
-        MNode getFieldValidateNode(String fieldName) {
-            MNode fieldNode = (MNode) fieldNodeMap.get(fieldName)
-            if (fieldNode == null) throw new BaseArtifactException("Tried to get in-parameter node for field [${fieldName}] that doesn't exist in form [${location}]")
-            String validateService = fieldNode.attribute('validate-service')
-            String validateEntity = fieldNode.attribute('validate-entity')
+        MNode getFieldValidateNode(MNode subFieldNode) {
+            MNode fieldNode = subFieldNode.getParent()
+            String fieldName = fieldNode.attribute("name")
+            String validateService = subFieldNode.attribute('validate-service')
+            String validateEntity = subFieldNode.attribute('validate-entity')
             if (validateService) {
                 ServiceDefinition sd = ecfi.serviceFacade.getServiceDefinition(validateService)
                 if (sd == null) throw new BaseArtifactException("Invalid validate-service name [${validateService}] in field [${fieldName}] of form [${location}]")
-                MNode parameterNode = sd.getInParameter((String) fieldNode.attribute('validate-parameter') ?: fieldName)
+                MNode parameterNode = sd.getInParameter((String) subFieldNode.attribute('validate-parameter') ?: fieldName)
                 return parameterNode
             } else if (validateEntity) {
                 EntityDefinition ed = ecfi.entityFacade.getEntityDefinition(validateEntity)
                 if (ed == null) throw new BaseArtifactException("Invalid validate-entity name [${validateEntity}] in field [${fieldName}] of form [${location}]")
-                MNode efNode = ed.getFieldNode((String) fieldNode.attribute('validate-field') ?: fieldName)
+                MNode efNode = ed.getFieldNode((String) subFieldNode.attribute('validate-field') ?: fieldName)
                 return efNode
             }
             return null
         }
-        String getFieldValidationClasses(String fieldName) {
-            MNode validateNode = getFieldValidateNode(fieldName)
+        String getFieldValidationClasses(MNode subFieldNode) {
+            MNode validateNode = getFieldValidateNode(subFieldNode)
             if (validateNode == null) return ""
 
             Set<String> vcs = new HashSet()
@@ -1281,8 +1308,8 @@ class ScreenForm {
             for (String vc in vcs) { if (sb) sb.append(" "); sb.append(vc); }
             return sb.toString()
         }
-        Map getFieldValidationRegexpInfo(String fieldName) {
-            MNode validateNode = getFieldValidateNode(fieldName)
+        Map getFieldValidationRegexpInfo(MNode subFieldNode) {
+            MNode validateNode = getFieldValidateNode(subFieldNode)
             if (validateNode?.hasChild("matches")) {
                 MNode matchesNode = validateNode.first("matches")
                 return [regexp:matchesNode.attribute('regexp'), message:matchesNode.attribute('message')]
@@ -1311,14 +1338,14 @@ class ScreenForm {
             return headerField.hasChild("submit")
         }
 
-        private boolean isListFieldHiddenAttr(MNode fieldNode) {
+        boolean isListFieldHiddenAttr(MNode fieldNode) {
             String hideAttr = fieldNode.attribute("hide")
             if (hideAttr != null && hideAttr.length() > 0) {
                 return ecfi.getEci().resource.condition(hideAttr, "")
             }
             return false
         }
-        private static boolean isListFieldHiddenWidget(MNode fieldNode) {
+        static boolean isListFieldHiddenWidget(MNode fieldNode) {
             // if default-field or any conditional-field don't have hidden or ignored elements then it's not hidden
             MNode defaultField = fieldNode.first("default-field")
             if (defaultField != null && !defaultField.hasChild("hidden") && !defaultField.hasChild("ignored")) return false
@@ -1454,12 +1481,23 @@ class ScreenForm {
 
         ArrayList<EntityValue> makeFormListFindFields(String formListFindId, ExecutionContext ec) {
             ContextStack cs = ec.context
+
+            Set<String> skipSet = null
+            MNode entityFindNode = screenForm.entityFindNode
+            if (entityFindNode != null) {
+                MNode sfiNode = entityFindNode.first("search-form-inputs")
+                String skipFields = sfiNode?.attribute("skip-fields")
+                if (skipFields != null && !skipFields.isEmpty())
+                    skipSet = new HashSet<>(Arrays.asList(skipFields.split(",")).collect({ it.trim() }))
+            }
+
             List<EntityValue> valueList = new ArrayList<>()
             for (MNode fieldNode in allFieldNodes) {
                 // skip submit
                 if (isHeaderSubmitField(fieldNode)) continue
 
                 String fn = fieldNode.attribute("name")
+                if (skipSet != null && skipSet.contains(fn)) continue
 
                 if (cs.containsKey(fn) || cs.containsKey(fn + "_op")) {
                     // this will handle text-line, text-find, etc
@@ -1589,8 +1627,10 @@ class ScreenForm {
 
         boolean isHeaderForm() { return formInstance.isFormHeaderFormVal }
         boolean isFirstRowForm() { return formInstance.isFormFirstRowFormVal }
+        boolean isSecondRowForm() { return formInstance.isFormSecondRowFormVal }
         boolean isLastRowForm() { return formInstance.isFormLastRowFormVal }
         boolean hasFirstRow() { return formInstance.hasFirstRow }
+        boolean hasSecondRow() { return formInstance.hasSecondRow }
         boolean hasLastRow() { return formInstance.hasLastRow }
         String getFormLocation() { return formInstance.screenForm.location }
 
@@ -1601,6 +1641,7 @@ class ScreenForm {
         ArrayList<MNode> getListHiddenFieldList() { return formInstance.getListHiddenFieldList() }
         ArrayList<MNode> getListHeaderHiddenFieldList() { return formInstance.hiddenHeaderFieldList }
         ArrayList<MNode> getListFirstRowHiddenFieldList() { return formInstance.hiddenFirstRowFieldList }
+        ArrayList<MNode> getListSecondRowHiddenFieldList() { return formInstance.hiddenSecondRowFieldList }
         ArrayList<MNode> getListLastRowHiddenFieldList() { return formInstance.hiddenLastRowFieldList }
         LinkedHashSet<String> getDisplayedFields() { return displayedFieldSet }
 
@@ -1672,9 +1713,11 @@ class ScreenForm {
                         pageSize = efList.pageSize
                         pageIndex = efList.pageIndex
                     } else {
-                        count = ef.count()
                         pageIndex = ef.pageIndex
                         pageSize = ef.pageSize
+                        // this can be expensive, only get count if efList size is equal to pageSize (can skip if no paginate needed)
+                        if (efList.size() < pageSize) count = efList.size()
+                        else count = ef.count()
                     }
                     long maxIndex = (new BigDecimal(count-1)).divide(new BigDecimal(pageSize), 0, BigDecimal.ROUND_DOWN).longValue()
                     long pageRangeLow = (pageIndex * pageSize) + 1

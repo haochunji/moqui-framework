@@ -421,13 +421,16 @@ abstract class EntityFindBase implements EntityFind {
     protected boolean processInputFields(Map<String, Object> inputFieldsMap, Set<String> skipFieldSet, ExecutionContextImpl ec) {
         EntityDefinition ed = getEntityDef()
         boolean addedConditions = false
-        for (String fn in ed.getAllFieldNames()) {
+        for (FieldInfo fi in ed.allFieldInfoList) {
+            String fn = fi.name
             if (skipFieldSet.contains(fn)) continue
+
             // NOTE: do we need to do type conversion here?
 
             // this will handle text-find
             if (inputFieldsMap.containsKey(fn) || inputFieldsMap.containsKey(fn + "_op")) {
                 Object value = inputFieldsMap.get(fn)
+                boolean valueEmpty = ObjectUtilities.isEmpty(value)
                 String op = inputFieldsMap.get(fn + "_op") ?: "equals"
                 boolean not = (inputFieldsMap.get(fn + "_not") == "Y" || inputFieldsMap.get(fn + "_not") == "true")
                 boolean ic = (inputFieldsMap.get(fn + "_ic") == "Y" || inputFieldsMap.get(fn + "_ic") == "true")
@@ -435,29 +438,29 @@ abstract class EntityFindBase implements EntityFind {
                 EntityCondition cond = null
                 switch (op) {
                     case "equals":
-                        if (value) {
+                        if (!valueEmpty) {
                             Object convertedValue = value instanceof String ? ed.convertFieldString(fn, (String) value, ec) : value
                             cond = efi.entityConditionFactory.makeCondition(fn,
-                                    not ? EntityCondition.NOT_EQUAL : EntityCondition.EQUALS, convertedValue)
+                                    not ? EntityCondition.NOT_EQUAL : EntityCondition.EQUALS, convertedValue, not)
                             if (ic) cond.ignoreCase()
                         }
                         break
                     case "like":
-                        if (value) {
+                        if (!valueEmpty) {
                             cond = efi.entityConditionFactory.makeCondition(fn,
                                     not ? EntityCondition.NOT_LIKE : EntityCondition.LIKE, value)
                             if (ic) cond.ignoreCase()
                         }
                         break
                     case "contains":
-                        if (value) {
+                        if (!valueEmpty) {
                             cond = efi.entityConditionFactory.makeCondition(fn,
                                     not ? EntityCondition.NOT_LIKE : EntityCondition.LIKE, "%${value}%")
                             if (ic) cond.ignoreCase()
                         }
                         break
                     case "begins":
-                        if (value) {
+                        if (!valueEmpty) {
                             cond = efi.entityConditionFactory.makeCondition(fn,
                                     not ? EntityCondition.NOT_LIKE : EntityCondition.LIKE, "${value}%")
                             if (ic) cond.ignoreCase()
@@ -472,7 +475,7 @@ abstract class EntityFindBase implements EntityFind {
                                         not ? EntityCondition.NOT_EQUAL : EntityCondition.EQUALS, ""))
                         break
                     case "in":
-                        if (value) {
+                        if (!valueEmpty) {
                             Collection valueList = null
                             if (value instanceof CharSequence) {
                                 valueList = Arrays.asList(value.toString().split(","))
@@ -481,35 +484,47 @@ abstract class EntityFindBase implements EntityFind {
                             }
                             if (valueList) {
                                 cond = efi.entityConditionFactory.makeCondition(fn,
-                                        not ? EntityCondition.NOT_IN : EntityCondition.IN, valueList)
+                                        not ? EntityCondition.NOT_IN : EntityCondition.IN, valueList, not)
 
                             }
                         }
                         break
                 }
                 if (cond != null) {
-                    this.condition(cond)
+                    if (fi.hasAggregateFunction) { this.havingCondition(cond) } else { this.condition(cond) }
                     addedConditions = true
                 }
             } else if (inputFieldsMap.get(fn + "_period")) {
                 List<Timestamp> range = ec.user.getPeriodRange((String) inputFieldsMap.get(fn + "_period"),
                         (String) inputFieldsMap.get(fn + "_poffset"), (String) inputFieldsMap.get(fn + "_pdate"))
-                this.condition(efi.entityConditionFactory.makeCondition(fn, EntityCondition.GREATER_THAN_EQUAL_TO, range.get(0)))
-                this.condition(efi.entityConditionFactory.makeCondition(fn, EntityCondition.LESS_THAN, range.get(1)))
+                EntityCondition fromCond = efi.entityConditionFactory.makeCondition(fn, EntityCondition.GREATER_THAN_EQUAL_TO, range.get(0))
+                EntityCondition thruCond = efi.entityConditionFactory.makeCondition(fn, EntityCondition.LESS_THAN, range.get(1))
+                if (fi.hasAggregateFunction) { this.havingCondition(fromCond); this.havingCondition(thruCond) }
+                else { this.condition(fromCond); this.condition(thruCond) }
                 addedConditions = true
             } else {
                 // these will handle range-find and date-find
                 Object fromValue = inputFieldsMap.get(fn + "_from")
-                if (fromValue && fromValue instanceof CharSequence) fromValue = ed.convertFieldString(fn, fromValue.toString(), ec)
+                if (fromValue && fromValue instanceof CharSequence) {
+                    if (fi.typeValue == 2 && fromValue.length() < 12)
+                        fromValue = ec.l10nFacade.parseTimestamp(fromValue.toString() + " 00:00:00.000", "yyyy-MM-dd HH:mm:ss.SSS")
+                    else fromValue = ed.convertFieldString(fn, fromValue.toString(), ec)
+                }
                 Object thruValue = inputFieldsMap.get(fn + "_thru")
-                if (thruValue && thruValue instanceof CharSequence) thruValue = ed.convertFieldString(fn, thruValue.toString(), ec)
+                if (thruValue && thruValue instanceof CharSequence) {
+                    if (fi.typeValue == 2 && thruValue.length() < 12)
+                        thruValue = ec.l10nFacade.parseTimestamp(thruValue.toString() + " 23:59:59.999", "yyyy-MM-dd HH:mm:ss.SSS")
+                    else thruValue = ed.convertFieldString(fn, thruValue.toString(), ec)
+                }
 
                 if (!ObjectUtilities.isEmpty(fromValue)) {
-                    this.condition(efi.entityConditionFactory.makeCondition(fn, EntityCondition.GREATER_THAN_EQUAL_TO, fromValue))
+                    EntityCondition fromCond = efi.entityConditionFactory.makeCondition(fn, EntityCondition.GREATER_THAN_EQUAL_TO, fromValue)
+                    if (fi.hasAggregateFunction) { this.havingCondition(fromCond) } else { this.condition(fromCond) }
                     addedConditions = true
                 }
                 if (!ObjectUtilities.isEmpty(thruValue)) {
-                    this.condition(efi.entityConditionFactory.makeCondition(fn, EntityCondition.LESS_THAN_EQUAL_TO, thruValue))
+                    EntityCondition thruCond = efi.entityConditionFactory.makeCondition(fn, EntityCondition.LESS_THAN_EQUAL_TO, thruValue)
+                    if (fi.hasAggregateFunction) { this.havingCondition(thruCond) } else { this.condition(thruCond) }
                     addedConditions = true
                 }
             }
@@ -549,11 +564,11 @@ abstract class EntityFindBase implements EntityFind {
             for (String obsPart in orderByFieldName.split(",")) {
                 String orderByName = obsPart.trim()
                 FieldOrderOptions foo = new FieldOrderOptions(orderByName)
-                if (getEntityDef().isField(foo.fieldName)) this.orderByFields.add(orderByName)
+                if (getEntityDef().isField(foo.fieldName) && !this.orderByFields.contains(orderByName)) this.orderByFields.add(orderByName)
             }
         } else {
             FieldOrderOptions foo = new FieldOrderOptions(orderByFieldName)
-            if (getEntityDef().isField(foo.fieldName)) this.orderByFields.add(orderByFieldName)
+            if (getEntityDef().isField(foo.fieldName) && !this.orderByFields.contains(orderByFieldName)) this.orderByFields.add(orderByFieldName)
         }
         return this
     }
@@ -725,7 +740,7 @@ abstract class EntityFindBase implements EntityFind {
         boolean hasEmptyPk = false
         boolean hasFullPk = true
         if (singleCondField != null && ed.isPkField(singleCondField) && ObjectUtilities.isEmpty(singleCondValue)) {
-            hasEmptyPk = true; hasFullPk = false; }
+            hasEmptyPk = true; hasFullPk = false }
         ArrayList<String> pkNameList = ed.getPkFieldNames()
         int pkSize = pkNameList.size()
         int samSize = simpleAndMap != null ? simpleAndMap.size() : 0
@@ -746,7 +761,7 @@ abstract class EntityFindBase implements EntityFind {
             if (singleCondField != null) {
                 // this shouldn't generally happen, added to simpleAndMap internally on the fly when needed, but just in case
                 pks.put(singleCondField, singleCondValue)
-                singleCondField = (String) null; singleCondValue = null;
+                singleCondField = (String) null; singleCondValue = null
             }
             for (int i = 0; i < pkSize; i++) {
                 String fieldName = (String) pkNameList.get(i)
@@ -758,8 +773,13 @@ abstract class EntityFindBase implements EntityFind {
         // if any PK fields are null, for whatever reason in calling code, the result is null so no need to send to DB or cache or anything
         if (hasEmptyPk) return (EntityValue) null
 
-        // before combining conditions let ArtifactFacade add entity filters associated with authz
-        ec.artifactExecutionFacade.filterFindForUser(this)
+        boolean doCache = shouldCache()
+        // NOTE: artifactExecutionFacade.filterFindForUser() no longer called here, called in EntityFindBuilder after trimming if needed for view-entity
+        if (doCache) {
+            // don't cache if there are any applicable filter conditions
+            ArrayList findFilterList = ec.artifactExecutionFacade.getFindFiltersForUser(ed, null)
+            if (findFilterList != null && findFilterList.size() > 0) doCache = false
+        }
 
         EntityConditionImplBase whereCondition = getWhereEntityConditionInternal(ed)
 
@@ -780,7 +800,6 @@ abstract class EntityFindBase implements EntityFind {
 
         // if (txcValue != null && ed.getEntityName() == "foo") logger.warn("========= TX cache one value: ${txcValue}")
 
-        boolean doCache = shouldCache() && whereCondition != null
         Cache<EntityCondition, EntityValueBase> entityOneCache = doCache ?
                 ed.getCacheOne(efi.getEntityCache()) : (Cache<EntityCondition, EntityValueBase>) null
         EntityValueBase cacheHit = (EntityValueBase) null
@@ -815,6 +834,8 @@ abstract class EntityFindBase implements EntityFind {
                 }
             }
             if (!hasFieldOptions) fieldOptionsArray = (FieldOrderOptions[]) null
+            if (fieldOptionsArray == null && ftsSize == entityInfo.allFieldInfoArray.length)
+                fieldInfoArray = entityInfo.allFieldInfoArray
         }
 
         // if (ed.getEntityName() == "Asset") logger.warn("=========== find one of Asset ${this.simpleAndMap.get('assetId')}", new Exception("Location"))
@@ -976,23 +997,31 @@ abstract class EntityFindBase implements EntityFind {
                 ArrayList<MNode> ecObList = entityConditionNode.children("order-by")
                 if (ecObList != null) for (int i = 0; i < ecObList.size(); i++) {
                     MNode orderBy = (MNode) ecObList.get(i)
-                    orderByExpanded.add(orderBy.attribute("field-name"))
+                    String fieldName = orderBy.attribute("field-name")
+                    if(!orderByExpanded.contains(fieldName)) orderByExpanded.add(fieldName)
                 }
                 if ("true".equals(entityConditionNode.attribute("distinct"))) this.distinct(true)
             }
         }
 
-        // before combining conditions let ArtifactFacade add entity filters associated with authz
-        ec.artifactExecutionFacade.filterFindForUser(this)
+        boolean doEntityCache = shouldCache()
+
+        // NOTE: artifactExecutionFacade.filterFindForUser() no longer called here, called in EntityFindBuilder after trimming if needed for view-entity
+        if (doEntityCache) {
+            // don't cache if there are any applicable filter conditions
+            ArrayList findFilterList = ec.artifactExecutionFacade.getFindFiltersForUser(ed, null)
+            if (findFilterList != null && findFilterList.size() > 0) doEntityCache = false
+        }
 
         EntityConditionImplBase whereCondition = getWhereEntityConditionInternal(ed)
+        // don't cache if no whereCondition
+        if (whereCondition == null) doEntityCache = false
 
         // try the txCache first, more recent than general cache (and for update general cache entries will be cleared anyway)
         EntityListImpl txcEli = txCache != null ? txCache.listGet(ed, whereCondition, orderByExpanded) : (EntityListImpl) null
 
         // NOTE: don't cache if there is a having condition, for now just support where
         // NOTE: could avoid caching lists if it is a filtered find, but mostly by org so reusable: && !filteredFind
-        boolean doEntityCache = shouldCache() && whereCondition != null
         Cache<EntityCondition, EntityListImpl> entityListCache = doEntityCache ?
                 ed.getCacheList(efi.getEntityCache()) : (Cache<EntityCondition, EntityListImpl>) null
         EntityListImpl cacheList = (EntityListImpl) null
@@ -1045,6 +1074,8 @@ abstract class EntityFindBase implements EntityFind {
                     }
                 }
                 if (!hasFieldOptions) fieldOptionsArray = (FieldOrderOptions[]) null
+                if (fieldOptionsArray == null && ftsSize == entityInfo.allFieldInfoArray.length)
+                    fieldInfoArray = entityInfo.allFieldInfoArray
             }
 
             EntityConditionImplBase queryWhereCondition = whereCondition
@@ -1108,7 +1139,6 @@ abstract class EntityFindBase implements EntityFind {
     protected EntityListIterator iteratorInternal(ExecutionContextImpl ec, EntityDefinition ed) throws EntityException, SQLException {
         EntityJavaUtil.EntityInfo entityInfo = ed.entityInfo
         boolean isViewEntity = entityInfo.isView
-        ArtifactExecutionFacadeImpl aefi = ec.artifactExecutionFacade
 
         if (entityInfo.isInvalidViewEntity) throw new EntityException("Cannot do find for view-entity with name ${entityName} because it has no member entities or no aliased fields.")
 
@@ -1125,7 +1155,8 @@ abstract class EntityFindBase implements EntityFind {
                 ArrayList<MNode> ecObList = entityConditionNode.children("order-by")
                 if (ecObList != null) for (int i = 0; i < ecObList.size(); i++) {
                     MNode orderBy = ecObList.get(i)
-                    orderByExpanded.add(orderBy.attribute("field-name"))
+                    String fieldName = orderBy.attribute("field-name")
+                    if(!orderByExpanded.contains(fieldName)) orderByExpanded.add(fieldName)
                 }
                 if ("true".equals(entityConditionNode.attribute("distinct"))) this.distinct(true)
             }
@@ -1168,10 +1199,11 @@ abstract class EntityFindBase implements EntityFind {
                 }
             }
             if (!hasFieldOptions) fieldOptionsArray = (FieldOrderOptions[]) null
+            if (fieldOptionsArray == null && ftsSize == entityInfo.allFieldInfoArray.length)
+                fieldInfoArray = entityInfo.allFieldInfoArray
         }
 
-        // before combining conditions let ArtifactFacade add entity filters associated with authz
-        aefi.filterFindForUser(this)
+        // NOTE: artifactExecutionFacade.filterFindForUser() no longer called here, called in EntityFindBuilder after trimming if needed for view-entity
 
         EntityConditionImplBase whereCondition = getWhereEntityConditionInternal(ed)
         EntityConditionImplBase havingCondition = havingEntityCondition
@@ -1230,17 +1262,24 @@ abstract class EntityFindBase implements EntityFind {
     protected long countInternal(ExecutionContextImpl ec, EntityDefinition ed) throws EntityException, SQLException {
         EntityJavaUtil.EntityInfo entityInfo = ed.entityInfo
         boolean isViewEntity = entityInfo.isView
-        ArtifactExecutionFacadeImpl aefi = ec.artifactExecutionFacade
 
         // there may not be a simpleAndMap, but that's all we have that can be treated directly by the EECA
         // find EECA rules deprecated, not worth performance hit: efi.runEecaRules(ed.getFullEntityName(), simpleAndMap, "find-count", true)
 
-        // before combining conditions let ArtifactFacade add entity filters associated with authz
-        aefi.filterFindForUser(this)
+        boolean doCache = shouldCache()
+
+        // NOTE: artifactExecutionFacade.filterFindForUser() no longer called here, called in EntityFindBuilder after trimming if needed for view-entity
+        if (doCache) {
+            // don't cache if there are any applicable filter conditions
+            ArrayList findFilterList = ec.artifactExecutionFacade.getFindFiltersForUser(ed, null)
+            if (findFilterList != null && findFilterList.size() > 0) doCache = false
+        }
 
         EntityConditionImplBase whereCondition = getWhereEntityConditionInternal(ed)
+        // don't cache if no whereCondition
+        if (whereCondition == null) doCache = false
         // NOTE: don't cache if there is a having condition, for now just support where
-        boolean doCache = whereCondition != null && shouldCache()
+
         Cache<EntityCondition, Long> entityCountCache = doCache ? ed.getCacheCount(efi.getEntityCache()) : (Cache) null
         Long cacheCount = (Long) null
         if (doCache) cacheCount = (Long) entityCountCache.get(whereCondition)
@@ -1278,6 +1317,8 @@ abstract class EntityFindBase implements EntityFind {
                     }
                 }
                 if (!hasFieldOptions) fieldOptionsArray = (FieldOrderOptions[]) null
+                if (fieldOptionsArray == null && ftsSize == entityInfo.allFieldInfoArray.length)
+                    fieldInfoArray = entityInfo.allFieldInfoArray
             }
             // logger.warn("fieldsToSelect: ${fieldsToSelect} fieldInfoArray: ${fieldInfoArray}")
 
@@ -1366,24 +1407,29 @@ abstract class EntityFindBase implements EntityFind {
 
         // if there are no EECAs for the entity OR there is a TransactionCache in place just call ev.delete() on each
         boolean useEvDelete = txCache != null || efi.hasEecaRules(ed.getFullEntityName())
-        if (!useEvDelete) this.resultSetConcurrency(ResultSet.CONCUR_UPDATABLE)
         this.useCache(false)
-        EntityListIterator eli = (EntityListIterator) null
         long totalDeleted = 0
-        try {
-            eli = iterator()
-            EntityValue ev
-            while ((ev = eli.next()) != null) {
-                if (useEvDelete) {
-                    ev.delete()
-                } else {
-                    // not longer need to clear cache, eli.remote() does that
-                    eli.remove()
-                }
+        if (useEvDelete) {
+            EntityList el = list()
+            int elSize = el.size()
+            for (int i = 0; i < elSize; i++) {
+                EntityValue ev = (EntityValue) el.get(i)
+                ev.delete()
                 totalDeleted++
             }
-        } finally {
-            if (eli != null) eli.close()
+        } else {
+            this.resultSetConcurrency(ResultSet.CONCUR_UPDATABLE)
+            EntityListIterator eli = (EntityListIterator) null
+            try {
+                eli = iterator()
+                while (eli.next() != null) {
+                    // no longer need to clear cache, eli.remove() does that
+                    eli.remove()
+                    totalDeleted++
+                }
+            } finally {
+                if (eli != null) eli.close()
+            }
         }
         return totalDeleted
     }

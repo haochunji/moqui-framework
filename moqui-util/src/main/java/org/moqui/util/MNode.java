@@ -586,6 +586,7 @@ public class MNode implements TemplateNodeModel, TemplateSequenceModel, Template
             childBaseNode.attributeMap.putAll(childOverrideNode.attributeMap);
             if (childOverrideNode.childList != null && childOverrideNode.childList.size() > 0) {
                 if (childBaseNode.childList != null) {
+                    if (childBaseNode.childrenByName != null) childBaseNode.childrenByName.clear();
                     childBaseNode.childList.clear();
                 } else {
                     childBaseNode.childList = new ArrayList<>();
@@ -598,6 +599,7 @@ public class MNode implements TemplateNodeModel, TemplateSequenceModel, Template
                 }
             }
         } else {
+            if (childrenByName != null) childrenByName.remove(childOverrideNode.nodeName);
             if (childList == null) childList = new ArrayList<>();
             childList.add(childOverrideNode.deepCopy(this));
         }
@@ -610,6 +612,7 @@ public class MNode implements TemplateNodeModel, TemplateSequenceModel, Template
         if (baseChildNode != null) {
             baseChildNode.mergeNodeWithChildKey(overrideChildNode, grandchildName, keyAttributeName, grandchildMerger);
         } else {
+            if (childrenByName != null) childrenByName.remove(overrideChildNode.nodeName);
             if (childList == null) childList = new ArrayList<>();
             childList.add(overrideChildNode.deepCopy(this));
         }
@@ -632,6 +635,13 @@ public class MNode implements TemplateNodeModel, TemplateSequenceModel, Template
         mergeChildrenByKey(overrideNode, childNodesName, keyAttributeName, childMerger);
     }
     public void mergeChildrenByKey(MNode overrideNode, String childNodesName, String keyAttributeName, Closure childMerger) {
+        if (keyAttributeName == null || keyAttributeName.isEmpty()) {
+            mergeChildrenByKeys(overrideNode, childNodesName, childMerger);
+        } else {
+            mergeChildrenByKeys(overrideNode, childNodesName, childMerger, keyAttributeName);
+        }
+    }
+    public void mergeChildrenByKeys(MNode overrideNode, String childNodesName, Closure childMerger, String... keyAttributeNames) {
         if (overrideNode == null) throw new IllegalArgumentException("No overrideNode specified in call to mergeChildrenByKey");
         if (childNodesName == null || childNodesName.length() == 0) throw new IllegalArgumentException("No childNodesName specified in call to mergeChildrenByKey");
 
@@ -640,17 +650,32 @@ public class MNode implements TemplateNodeModel, TemplateSequenceModel, Template
         int overrideChildrenSize = overrideChildren.size();
         for (int curOc = 0; curOc < overrideChildrenSize; curOc++) {
             MNode childOverrideNode = overrideChildren.get(curOc);
-            boolean skipKeyValue = keyAttributeName == null || keyAttributeName.length() == 0;
-            String keyValue = skipKeyValue ? null : childOverrideNode.attribute(keyAttributeName);
-            // if we have a keyAttributeName but no keyValue for this child node, skip it
-            if ((keyValue == null || keyValue.length() == 0) && !skipKeyValue) continue;
+
+            String[] keyAttributeValues = null;
+            if (keyAttributeNames != null && keyAttributeNames.length > 0) {
+                keyAttributeValues = new String[keyAttributeNames.length];
+                boolean skipChild = false;
+                for (int ai = 0; ai < keyAttributeNames.length; ai++) {
+                    String keyValue = childOverrideNode.attribute(keyAttributeNames[ai]);
+                    // if we have a keyAttributeName but no keyValue for this child node, skip it
+                    if (keyValue == null || keyValue.length() == 0) { skipChild = true; continue; }
+                    keyAttributeValues[ai] = keyValue;
+                }
+                if (skipChild) continue;
+            }
 
             MNode childBaseNode = null;
             int childListSize = childList.size();
             for (int i = 0; i < childListSize; i++) {
                 MNode curChild = childList.get(i);
-                if (curChild.getName().equals(childNodesName) && (skipKeyValue || keyValue.equals(curChild.attribute(keyAttributeName))))
-                    childBaseNode = curChild;
+                if (!curChild.getName().equals(childNodesName)) continue;
+                if (keyAttributeNames == null || keyAttributeNames.length == 0) { childBaseNode = curChild; break; }
+                boolean allMatch = true;
+                for (int ai = 0; ai < keyAttributeNames.length; ai++) {
+                    String keyValue = keyAttributeValues[ai];
+                    if (!keyValue.equals(curChild.attribute(keyAttributeNames[ai]))) allMatch = false;
+                }
+                if (allMatch) { childBaseNode = curChild; break; }
             }
 
             if (childBaseNode != null) {
@@ -662,6 +687,7 @@ public class MNode implements TemplateNodeModel, TemplateSequenceModel, Template
                 } else {
                     // do the default child merge: remove current nodes children and replace with a copy of the override node's children
                     if (childBaseNode.childList != null) {
+                        if (childBaseNode.childrenByName != null) childBaseNode.childrenByName.clear();
                         childBaseNode.childList.clear();
                     } else {
                         childBaseNode.childList = new ArrayList<>();

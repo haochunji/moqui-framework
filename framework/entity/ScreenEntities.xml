@@ -17,6 +17,13 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- moqui.screen -->
     <!-- ========================================================= -->
 
+    <entity entity-name="ScreenPathAlias" package="moqui.screen" use="configuration" cache="true">
+        <field name="aliasPath" type="text-medium" is-pk="true"/>
+        <field name="fromDate" type="date-time" is-pk="true"/>
+        <field name="thruDate" type="date-time"/>
+        <field name="screenPath" type="text-medium"/>
+    </entity>
+
     <!-- ========== Subscreen ========== -->
     <entity entity-name="SubscreensItem" package="moqui.screen" use="configuration" cache="true">
         <field name="screenLocation" type="text-medium" is-pk="true"/>
@@ -37,6 +44,9 @@ along with this software (see the LICENSE.md file). If not, see
         </field>
         <field name="makeDefault" type="text-indicator">
             <description>If Y will be set at the default subscreen (replacing screen.subscreens.@default-item)</description></field>
+        <field name="noSubPath" type="text-indicator">
+            <description>If Y the sub-screens of the sub-screen may be referenced directly under this screen, skipping the
+                screen path element for the sub-screen</description></field>
         <relationship type="one" related="moqui.security.UserGroup"/>
     </entity>
     <entity entity-name="SubscreensDefault" package="moqui.screen" use="configuration" cache="true">
@@ -228,6 +238,7 @@ along with this software (see the LICENSE.md file). If not, see
         <seed-data>
             <moqui.basic.EnumerationType description="DB Form Purpose" enumTypeId="DbFormPurpose"/>
             <moqui.basic.Enumeration description="Other" enumId="DbfpOther" enumTypeId="DbFormPurpose"/>
+            <moqui.basic.Enumeration description="Survey" enumId="DbfpSurvey" enumTypeId="DbFormPurpose"/>
         </seed-data>
     </entity>
     <entity entity-name="DbFormField" package="moqui.screen.form" use="configuration">
@@ -344,6 +355,15 @@ along with this software (see the LICENSE.md file). If not, see
         <alias name="userGroupId" entity-alias="DBFUG"/>
     </view-entity>
 
+    <view-entity entity-name="DbFormAndUserGroup" package="moqui.screen.form">
+        <member-entity entity-alias="DBFUG" entity-name="moqui.screen.form.DbFormUserGroup">
+            <key-map field-name="formId"/></member-entity>
+        <member-entity entity-alias="USRGRP" entity-name="moqui.security.UserGroup" join-from-alias="DBFUG">
+            <key-map field-name="userGroupId"/></member-entity>
+        <alias-all entity-alias="USRGRP"/>
+        <alias name="formId" entity-alias="DBFUG"/>
+    </view-entity>
+
     <entity entity-name="FormResponse" package="moqui.screen.form" use="nontransactional" cache="never">
         <field name="formResponseId" type="id" is-pk="true"/>
         <field name="formLocation" type="text-medium"/>
@@ -365,6 +385,15 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- this is nofk because for forms other than DbForms fieldName may be populated but formId null -->
         <relationship type="one-nofk" related="moqui.screen.form.DbFormField"/>
     </entity>
+
+    <view-entity entity-name="FormResponseAnsAndDbFormField" package="moqui.screen.form">
+        <member-entity entity-alias="FRA" entity-name="moqui.screen.form.FormResponseAnswer"/>
+        <member-entity entity-alias="DBFF" entity-name="moqui.screen.form.DbFormField" join-from-alias="FRA">
+            <key-map field-name="formId"/>
+            <key-map field-name="fieldName"/></member-entity>
+        <alias-all entity-alias="FRA"><exclude field="sequenceNum"/></alias-all>
+        <alias-all entity-alias="DBFF"/>
+    </view-entity>
 
     <!-- ========================================================= -->
     <!-- moqui.screen.dynscreen -->

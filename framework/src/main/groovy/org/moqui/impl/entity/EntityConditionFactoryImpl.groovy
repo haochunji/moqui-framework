@@ -90,7 +90,11 @@ class EntityConditionFactoryImpl implements EntityConditionFactory {
     EntityCondition makeCondition(String fieldName, ComparisonOperator operator, Object value) {
         return new FieldValueCondition(new ConditionField(fieldName), operator, value)
     }
-
+    @Override
+    EntityCondition makeCondition(String fieldName, ComparisonOperator operator, Object value, boolean orNull) {
+        EntityConditionImplBase cond = new FieldValueCondition(new ConditionField(fieldName), operator, value)
+        return orNull ? makeCondition(cond, JoinOperator.OR, makeCondition(fieldName, ComparisonOperator.EQUALS, null)) : cond
+    }
     @Override
     EntityCondition makeConditionToField(String fieldName, ComparisonOperator operator, String toFieldName) {
         return new FieldToFieldCondition(new ConditionField(fieldName), operator, new ConditionField(toFieldName))
@@ -127,7 +131,7 @@ class EntityConditionFactoryImpl implements EntityConditionFactory {
         }
         if (newList == null || newList.size() == 0) return null
         if (newList.size() == 1) {
-            return newList.get(0)
+            return (EntityCondition) newList.get(0)
         } else {
             return new ListCondition(newList, operator)
         }
@@ -243,7 +247,15 @@ class EntityConditionFactoryImpl implements EntityConditionFactory {
                             condList.add(makeConditionImpl(new FieldValueCondition(cf, compOp, value), JoinOperator.OR,
                                     new FieldValueCondition(cf, ComparisonOperator.EQUALS, null)))
                         } else {
-                            condList.add(new FieldValueCondition(cf, compOp, value))
+                            // in view-entities do or null for member entities that are join-optional
+                            String memberAlias = aliasNode.attribute("entity-alias")
+                            MNode memberEntity = findEd.getMemberEntityNode(memberAlias)
+                            if ("true".equals(memberEntity.attribute("join-optional"))) {
+                                condList.add(new BasicJoinCondition(new FieldValueCondition(cf, compOp, value), JoinOperator.OR,
+                                        new FieldValueCondition(cf, ComparisonOperator.EQUALS, null)))
+                            } else {
+                                condList.add(new FieldValueCondition(cf, compOp, value))
+                            }
                         }
                     }
                 } else {
@@ -310,6 +322,33 @@ class EntityConditionFactoryImpl implements EntityConditionFactory {
         }
     }
 
+    static EntityConditionImplBase addAndListToCondition(EntityConditionImplBase baseCond, ArrayList<EntityConditionImplBase> condList) {
+        EntityConditionImplBase outCondition = baseCond
+        int condListSize = condList != null ? condList.size() : 0
+        if (condListSize > 0) {
+            if (baseCond == null) {
+                if (condListSize == 1) {
+                    outCondition = (EntityConditionImplBase) condList.get(0)
+                } else {
+                    outCondition = new ListCondition(condList, EntityCondition.AND)
+                }
+            } else {
+                ListCondition newListCond = (ListCondition) null
+                if (baseCond instanceof ListCondition) {
+                    ListCondition baseListCond = (ListCondition) baseCond
+                    if (EntityCondition.AND.is(baseListCond.operator)) {
+                        // modify in place
+                        newListCond = baseListCond
+                    }
+                }
+                if (newListCond == null) newListCond = new ListCondition([baseCond], EntityCondition.AND)
+                newListCond.addConditions(condList)
+                outCondition = newListCond
+            }
+        }
+        return outCondition
+    }
+
     EntityCondition makeActionCondition(String fieldName, String operator, String fromExpr, String value, String toFieldName,
                                         boolean ignoreCase, boolean ignoreIfEmpty, boolean orNull, String ignore) {
         Object from = fromExpr ? this.efi.ecfi.resourceFacade.expression(fromExpr, "") : null
@@ -353,9 +392,44 @@ class EntityConditionFactoryImpl implements EntityConditionFactory {
                 (attrs.get("ignore") ?: "false"))
     }
 
-    EntityCondition makeActionConditions(MNode node) {
-        List<EntityCondition> condList = new ArrayList()
-        for (MNode subCond in node.children) condList.add(makeActionCondition(subCond))
+    EntityCondition makeActionConditions(MNode node, boolean isCached) {
+        ArrayList<EntityCondition> condList = new ArrayList()
+        ArrayList<MNode> subCondList = node.getChildren()
+        int subCondListSize = subCondList.size()
+        for (int i = 0; i < subCondListSize; i++) {
+            MNode subCond = (MNode) subCondList.get(i)
+            if ("econdition".equals(subCond.nodeName)) {
+                EntityCondition econd = makeActionCondition(subCond)
+                if (econd != null) condList.add(econd)
+            } else if ("econditions".equals(subCond.nodeName)) {
+                EntityCondition econd = makeActionConditions(subCond, isCached)
+                if (econd != null) condList.add(econd)
+            } else if ("date-filter".equals(subCond.nodeName)) {
+                if (!isCached) {
+                    Timestamp validDate = subCond.attribute("valid-date") ?
+                            efi.ecfi.resourceFacade.expression(subCond.attribute("valid-date"), null) as Timestamp : null
+                    condList.add(makeConditionDate(subCond.attribute("from-field-name") ?: "fromDate",
+                            subCond.attribute("thru-field-name") ?: "thruDate", validDate,
+                            'true'.equals(subCond.attribute("ignore-if-empty")), subCond.attribute("ignore") ?: 'false'))
+                }
+            } else if ("econdition-object".equals(subCond.nodeName)) {
+                Object curObj = efi.ecfi.resourceFacade.expression(subCond.attribute("field"), null)
+                if (curObj == null) continue
+                if (curObj instanceof Map) {
+                    Map curMap = (Map) curObj
+                    if (curMap.size() == 0) continue
+                    EntityCondition curCond = makeCondition(curMap, ComparisonOperator.EQUALS, JoinOperator.AND)
+                    condList.add((EntityConditionImplBase) curCond)
+                    continue
+                }
+                if (curObj instanceof EntityConditionImplBase) {
+                    EntityConditionImplBase curCond = (EntityConditionImplBase) curObj
+                    condList.add(curCond)
+                    continue
+                }
+                throw new BaseArtifactException("The econdition-object field attribute must contain only Map and EntityCondition objects, found entry of type [${curObj.getClass().getName()}]")
+            }
+        }
         return makeCondition(condList, getJoinOperator(node.attribute("combine")))
     }
 
@@ -426,22 +500,10 @@ class EntityConditionFactoryImpl implements EntityConditionFactory {
             "IS NOT NULL":ComparisonOperator.IS_NOT_NULL
     ]
 
-    static String getJoinOperatorString(JoinOperator op) {
-        return op == JoinOperator.OR ? "OR" : "AND"
-    }
-    static JoinOperator getJoinOperator(String opName) {
-        if (!opName) return JoinOperator.AND
-        switch (opName) {
-            case "or":
-            case "OR": return JoinOperator.OR
-            case "and":
-            case "AND":
-            default: return JoinOperator.AND
-        }
-    }
-    static String getComparisonOperatorString(ComparisonOperator op) {
-        return comparisonOperatorStringMap.get(op)
-    }
+    static String getJoinOperatorString(JoinOperator op) { return JoinOperator.OR.is(op) ? "OR" : "AND" }
+    static JoinOperator getJoinOperator(String opName) { return "or".equalsIgnoreCase(opName) ? JoinOperator.OR :JoinOperator.AND }
+
+    static String getComparisonOperatorString(ComparisonOperator op) { return comparisonOperatorStringMap.get(op) }
     static ComparisonOperator getComparisonOperator(String opName) {
         if (opName == null) return ComparisonOperator.EQUALS
         ComparisonOperator co = stringComparisonOperatorMap.get(opName)
