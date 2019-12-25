@@ -124,6 +124,7 @@ dependencies {
     compile 'javax.xml.bind:jaxb-api:2.3.1' // CDDL 1.1
     // NOTE: javax.activation:javax.activation-api is required by jaxb-api, has classes same as old 2012 javax.activation:activation used by javax.mail
     compile 'javax.activation:javax.activation-api:1.2.0' // CDDL 1.1
+    compile 'com.sun.activation:javax.activation:1.2.0'
     // using websocket-api 1.0, don't update to 1.1 until used in Jetty, Tomcat, etc
     compile 'javax.websocket:javax.websocket-api:1.0'
     providedCompile 'javax.servlet:javax.servlet-api:3.1.0'
