@@ -72,6 +72,7 @@ abstract class EntityFindBase implements EntityFind {
     protected Integer offset = (Integer) null
     protected Integer limit = (Integer) null
     protected boolean forUpdate = false
+    protected boolean useClone = false
 
     protected int resultSetType = defaultResultSetType
     protected int resultSetConcurrency = ResultSet.CONCUR_READ_ONLY
@@ -595,6 +596,8 @@ abstract class EntityFindBase implements EntityFind {
     @Override EntityFind useCache(Boolean useCache) { this.useCache = useCache; return this }
     @Override boolean getUseCache() { return this.useCache }
 
+    @Override EntityFind useClone(boolean uc) { useClone = uc; return this }
+
     // ======================== Advanced Options ==============================
 
     @Override EntityFind distinct(boolean distinct) { this.distinct = distinct; return this }
@@ -985,7 +988,10 @@ abstract class EntityFindBase implements EntityFind {
     }
 
     protected EntityList listInternal(ExecutionContextImpl ec, EntityDefinition ed) throws EntityException, SQLException {
-        if (requireSearchFormParameters && !hasSearchFormParameters) return new EntityListImpl(efi)
+        if (requireSearchFormParameters && !hasSearchFormParameters) {
+            logger.info("No parameters for list find on ${ed.fullEntityName}, not doing search")
+            return new EntityListImpl(efi)
+        }
 
         EntityJavaUtil.EntityInfo entityInfo = ed.entityInfo
         boolean isViewEntity = entityInfo.isView

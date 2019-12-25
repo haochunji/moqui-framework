@@ -90,6 +90,7 @@ class ScreenRenderImpl implements ScreenRender {
     protected Writer internalWriter = (Writer) null
     protected Writer afterScreenWriter = (Writer) null
     protected Writer scriptWriter = (Writer) null
+    protected OutputStream internalOutputStream = (OutputStream) null
 
     protected boolean dontDoRender = false
     protected boolean saveHistory = false
@@ -105,11 +106,25 @@ class ScreenRenderImpl implements ScreenRender {
 
     Writer getWriter() {
         if (internalWriter != null) return internalWriter
+        if (internalOutputStream != null) {
+            if (characterEncoding == null || characterEncoding.length() == 0) characterEncoding = "UTF-8"
+            internalWriter = new OutputStreamWriter(internalOutputStream, characterEncoding)
+            return internalWriter
+        }
         if (response != null) {
             internalWriter = response.getWriter()
             return internalWriter
         }
         throw new BaseArtifactException("Could not render screen, no writer available")
+    }
+
+    OutputStream getOutputStream() {
+        if (internalOutputStream != null) return internalOutputStream
+        if (response != null) {
+            internalOutputStream = response.getOutputStream()
+            return internalOutputStream
+        }
+        throw new BaseArtifactException("Could not render screen, no output stream available")
     }
 
     ScreenUrlInfo getScreenUrlInfo() { return screenUrlInfo }
@@ -158,6 +173,14 @@ class ScreenRenderImpl implements ScreenRender {
     }
 
     @Override
+    void render(OutputStream os) {
+        if (rendering) throw new IllegalStateException("This screen render has already been used")
+        rendering = true
+        internalOutputStream = os
+        internalRender()
+    }
+
+    @Override
     String render() {
         if (rendering) throw new IllegalStateException("This screen render has already been used")
         rendering = true
@@ -171,9 +194,16 @@ class ScreenRenderImpl implements ScreenRender {
         if (response != null) {
             if (servletContextPath != null && !servletContextPath.isEmpty() && redirectUrl.startsWith("/"))
                 redirectUrl = servletContextPath + redirectUrl
-            response.sendRedirect(redirectUrl)
+            if ("vuet".equals(renderMode)) {
+                if (logger.isInfoEnabled()) logger.info("Redirecting (vuet) to ${redirectUrl} instead of rendering ${this.getScreenUrlInfo().getFullPathNameList()}")
+                response.addHeader("X-Redirect-To", redirectUrl)
+                // use code 205 (Reset Content) for client router handled redirect
+                response.setStatus(HttpServletResponse.SC_RESET_CONTENT)
+            } else {
+                if (logger.isInfoEnabled()) logger.info("Redirecting to ${redirectUrl} instead of rendering ${this.getScreenUrlInfo().getFullPathNameList()}")
+                response.sendRedirect(redirectUrl)
+            }
             dontDoRender = true
-            if (logger.isInfoEnabled()) logger.info("Redirecting to ${redirectUrl} instead of rendering ${this.getScreenUrlInfo().getFullPathNameList()}")
         }
     }
     boolean sendJsonRedirect(UrlInstance fullUrl, Long renderStartTime) {
@@ -690,7 +720,7 @@ class ScreenRenderImpl implements ScreenRender {
         boolean isServerStatic = screenUrlInfo.targetScreen.isServerStatic(renderMode)
         // TODO: consider server caching of rendered screen, this is the place to do it
 
-        boolean beganTransaction = screenUrlInfo.beginTransaction ? sfi.ecfi.transactionFacade.begin(null) : false
+        boolean beganTransaction = screenUrlInfo.beginTransaction ? sfi.ecfi.transactionFacade.begin(screenUrlInfo.transactionTimeout) : false
         try {
             // run always-actions for all screens in path
             boolean hasAlwaysActions = false
@@ -1054,6 +1084,11 @@ class ScreenRenderImpl implements ScreenRender {
             }
             return overrideTemplateLocation != null ? sfi.getTemplateByLocation(overrideTemplateLocation) : sfi.getTemplateByMode(renderMode)
         }
+    }
+    ScreenWidgetRender getScreenWidgetRender() {
+        ScreenWidgetRender swr = sfi.getWidgetRenderByMode(renderMode)
+        if (swr == null) throw new BaseArtifactException("Could not find ScreenWidgerRender implementation for render mode ${renderMode}")
+        return swr
     }
 
     String renderSection(String sectionName) {
@@ -1780,7 +1815,7 @@ class ScreenRenderImpl implements ScreenRender {
         int extraPathSize = extraPathList != null ? extraPathList.size() : 0
         if (extraPathSize > 0) {
             fullPathSize -= extraPathSize
-            fullPathList = new ArrayList<>(fullPathList.subList(0, fullPathSize))
+            fullPathList = new ArrayList<String>(fullPathList.subList(0, fullPathSize))
         }
 
         StringBuilder currentPath = new StringBuilder()
