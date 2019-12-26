@@ -4,6 +4,7 @@ myaddons.xml
 # gradle/build files
 build
 .gradle
+/gradle/wrapper/*.zip
 /framework/dependencies
 
 # build generated files
