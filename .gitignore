@@ -5,6 +5,7 @@ myaddons.xml
 build
 .gradle
 /framework/dependencies
+/gradle/wrapper/*.zip
 
 # build generated files
 /moqui*.war
