@@ -17,6 +17,8 @@ import java.lang.reflect.Array;
 import java.lang.reflect.Method;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.security.CodeSource;
 import java.security.ProtectionDomain;
 import java.security.cert.Certificate;
@@ -463,10 +465,27 @@ public class MoquiStart {
             System.out.println("ElasticSearch install found in runtime/elasticsearch, pid file found so not starting");
             return null;
         }
-        String[] envArr = { "JAVA_HOME=" + System.getProperty("java.home") };
-        System.out.println("Starting ElasticSearch install found in runtime/elasticsearch, pid file not found (" + envArr[0] + ")");
+        String javaHome = System.getProperty("java.home");
+        System.out.println("Starting ElasticSearch install found in runtime/elasticsearch, pid file not found (" + javaHome + ")");
+        boolean isWindows = System.getProperty("os.name").toLowerCase().startsWith("windows");
         try {
-            Process esProcess = Runtime.getRuntime().exec("./bin/elasticsearch", envArr, new File(esDir));
+            String[] command;
+            if (isWindows) {
+                command = new String[] {"cmd.exe", "/c", "bin\\elasticsearch.bat"};
+            } else {
+                command = new String[]{"./bin/elasticsearch"};
+                try {
+                    boolean elasticsearchOwner = Files.getOwner(Paths.get(runtimePath, "elasticsearch")).getName().equals("elasticsearch");
+                    boolean suAble = Runtime.getRuntime().exec(new String[]{"/bin/su", "-c", "/bin/true", "elasticsearch"}).waitFor() == 0;
+                    if (elasticsearchOwner && suAble) command = new String[]{"su", "-c", "./bin/elasticsearch", "elasticsearch"};
+                } catch (IOException e) {}
+            }
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            pb.directory(new File(esDir));
+            pb.environment().put("JAVA_HOME", javaHome);
+            pb.inheritIO();
+            Process esProcess = pb.start();
             System.setProperty("moqui.elasticsearch.started", "true");
             return esProcess;
         } catch (Exception e) {
