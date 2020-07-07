@@ -17,6 +17,7 @@ import org.moqui.entity.EntityDynamicView;
 import org.moqui.entity.EntityListIterator;
 import org.moqui.impl.entity.condition.EntityConditionImplBase;
 import org.moqui.impl.entity.EntityJavaUtil.FieldOrderOptions;
+import org.moqui.util.LiteStringMap;
 import org.moqui.util.MNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +26,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Map;
 
 public class EntityFindImpl extends EntityFindBase {
     protected static final Logger logger = LoggerFactory.getLogger(EntityFindImpl.class);
@@ -51,6 +52,8 @@ public class EntityFindImpl extends EntityFindBase {
         if (!ed.tableExistsDbMetaOnly()) return null;
 
         EntityFindBuilder efb = new EntityFindBuilder(ed, this, whereCondition, fieldInfoArray);
+        // flag as a find one, small changes to internal behavior to reduce overhead
+        efb.isFineOne();
 
         // SELECT fields
         efb.makeSqlSelectFields(fieldInfoArray, fieldOptionsArray, false);
@@ -60,6 +63,8 @@ public class EntityFindImpl extends EntityFindBase {
         efb.makeWhereClause();
         // GROUP BY clause
         efb.makeGroupByClause();
+        // LIMIT/OFFSET clause - for find one always limit to 1
+        efb.addLimitOffset(1, 0);
         // FOR UPDATE
         if (getForUpdate()) efb.makeForUpdate();
 
@@ -79,7 +84,7 @@ public class EntityFindImpl extends EntityFindBase {
             ResultSet rs = efb.executeQuery();
             if (rs.next()) {
                 newEntityValue = new EntityValueImpl(ed, efi);
-                HashMap<String, Object> valueMap = newEntityValue.getValueMap();
+                LiteStringMap<Object> valueMap = newEntityValue.valueMapInternal;
                 int size = fieldInfoArray.length;
                 for (int i = 0; i < size; i++) {
                     FieldInfo fi = fieldInfoArray[i];

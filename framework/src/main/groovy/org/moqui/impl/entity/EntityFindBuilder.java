@@ -30,7 +30,8 @@ import java.util.Set;
 import java.util.TreeSet;
 
 public class EntityFindBuilder extends EntityQueryBuilder {
-    protected static final Logger logger = LoggerFactory.getLogger(EntityFindBuilder.class);
+    private static final Logger logger = LoggerFactory.getLogger(EntityFindBuilder.class);
+    private static final boolean isDebugEnabled = logger.isDebugEnabled();
 
     private EntityFindBase entityFindBase;
     private EntityConditionImplBase whereCondition;
@@ -770,7 +771,9 @@ public class EntityFindBuilder extends EntityQueryBuilder {
             Integer maxRows = entityFindBase.getMaxRows();
             Integer fetchSize = entityFindBase.getFetchSize();
             if (maxRows != null && maxRows > 0) ps.setMaxRows(maxRows);
-            if (fetchSize != null && fetchSize > 0) ps.setFetchSize(fetchSize);
+            // NOTE: always set a fetch size, without explicit fetch size some JDBC drivers (like MySQL Connector/J) will try to fetch all rows
+            // NOTE: the default here of 1000 is a balance between memory use and network overhead, 100 rows generally being easy to accommodate
+            if (fetchSize != null && fetchSize > 0) { ps.setFetchSize(fetchSize); } else { ps.setFetchSize(100); }
         } catch (SQLException e) {
             EntityQueryBuilder.handleSqlException(e, finalSql);
         }
