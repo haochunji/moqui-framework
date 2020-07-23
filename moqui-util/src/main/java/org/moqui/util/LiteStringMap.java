@@ -317,11 +317,16 @@ public class LiteStringMap<V> implements Map<String, V>, Externalizable, Compara
     @SuppressWarnings("unchecked")
     public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
         int size = in.readInt();
+        if (keyArray.length < size) {
+            keyArray = new String[size];
+            valueArray = (V[]) new Object[size];
+        }
         lastIndex = size - 1;
         mapHash = 0;
         // now that we know the size read each key/value pair
         for (int i = 0; i < size; i++) {
-            keyArray[i] = in.readUTF();
+            // intern Strings, from deserialize they will not be interned
+            keyArray[i] = internString(in.readUTF());
             valueArray[i] = (V) in.readObject();
         }
     }
