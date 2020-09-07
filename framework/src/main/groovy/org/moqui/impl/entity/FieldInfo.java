@@ -39,6 +39,7 @@ public class FieldInfo {
 
     public final EntityDefinition ed;
     public final MNode fieldNode;
+    public final int index;
     public final String entityName;
     public final String name;
     public final String aliasFieldName;
@@ -63,9 +64,10 @@ public class FieldInfo {
     public final boolean hasAggregateFunction;
     final Set<String> entityAliasUsedSet = new HashSet<>();
 
-    public FieldInfo(EntityDefinition ed, MNode fieldNode) {
+    public FieldInfo(EntityDefinition ed, MNode fieldNode, int index) {
         this.ed = ed;
         this.fieldNode = fieldNode;
+        this.index = index;
         entityName = ed.getFullEntityName();
 
         Map<String, String> fnAttrs = fieldNode.getAttributes();
@@ -398,7 +400,7 @@ public class FieldInfo {
             }
         }
 
-        valueMap.putByIString(name, value);
+        valueMap.putByIString(this.name, value, this.index);
     }
 
     private static final boolean checkPreparedStatementValueType = false;
@@ -438,8 +440,10 @@ public class FieldInfo {
             useBinaryTypeForBlob = ("true".equals(efi.getDatabaseNode(ed.getEntityGroupName()).attribute("use-binary-type-for-blob")));
         }
         // if a count function used set as Long (type 6)
-        String function = fieldNode.attribute("function");
-        if (function != null && function.startsWith("count")) localTypeValue = 6;
+        if (ed.isViewEntity) {
+            String function = fieldNode.attribute("function");
+            if (function != null && function.startsWith("count")) localTypeValue = 6;
+        }
 
         try {
             setPreparedStatementValue(ps, index, value, localTypeValue, useBinaryTypeForBlob, efi);
