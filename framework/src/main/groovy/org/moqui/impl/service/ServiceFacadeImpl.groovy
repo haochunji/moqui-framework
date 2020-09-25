@@ -44,7 +44,7 @@ class ServiceFacadeImpl implements ServiceFacade {
     protected final ReentrantLock locationLoadLock = new ReentrantLock()
 
     protected Map<String, ArrayList<ServiceEcaRule>> secaRulesByServiceName = new HashMap<>()
-    protected final List<EmailEcaRule> emecaRuleList = new ArrayList()
+    protected final List<EmailEcaRule> emecaRuleList = new ArrayList<EmailEcaRule>()
     public final RestApi restApi
 
     protected final Map<String, ServiceRunner> serviceRunners = new HashMap()

@@ -198,6 +198,10 @@ dependencies {
     execWarRuntime ('org.eclipse.jetty.websocket:websocket-server:9.4.31.v20200723') // Apache 2.0
     // only include this if using Endpoint and MessageHandler annotations:
     // execWarRuntime ('org.eclipse.jetty:jetty-annotations:9.4.31.v20200723') // Apache 2.0
+
+    //Flowable
+    compile 'org.flowable:flowable-engine:6.5.0'
+    compile 'org.liquibase:liquibase-core:3.8.0'
 }
 
 // setup task dependencies to make sure the start sourceSets always get run
