@@ -972,6 +972,15 @@ class ScreenForm {
             baseFormNode.remove("form-list-column")
             for (MNode flcNode in overrideFormNode.children("form-list-column")) baseFormNode.append(flcNode.deepCopy(null))
         }
+        if (overrideFormNode.hasChild("columns")) {
+            // each columns element by @type attribute overrides corresponding type
+            for (MNode columnsNode in overrideFormNode.children("columns")) {
+                String type = columnsNode.attribute("type")
+                // remove base node children with matching type value
+                baseFormNode.remove({ MNode it -> "columns".equals(it.name) && it.attribute("type") == type })
+                baseFormNode.append(columnsNode.deepCopy(null))
+            }
+        }
     }
 
     protected static void mergeFieldNode(MNode baseFormNode, MNode overrideFieldNode, boolean deepCopy) {
@@ -1168,7 +1177,7 @@ class ScreenForm {
         private ArrayList<MNode> hiddenFirstRowFieldList = (ArrayList<MNode>) null
         private ArrayList<MNode> hiddenSecondRowFieldList = (ArrayList<MNode>) null
         private ArrayList<MNode> hiddenLastRowFieldList = (ArrayList<MNode>) null
-        private ArrayList<ArrayList<MNode>> formListColInfoList = (ArrayList<ArrayList<MNode>>) null
+        private HashMap<String, ArrayList<ArrayList<MNode>>> formListColInfoListMap = (HashMap<String, ArrayList<ArrayList<MNode>>>) null
         private boolean hasFieldHideAttrs = false
 
         boolean hasAggregate = false
@@ -1303,7 +1312,17 @@ class ScreenForm {
             if (hasLastRow && formNode.attribute("transition-last-row")) isFormLastRowFormVal = true
 
             // also populate fieldsInFormListColumns
-            if (isListForm) formListColInfoList = makeFormListColumnInfo()
+            if (isListForm) {
+                formListColInfoListMap = new HashMap<>()
+                // iterate through columns elements and populate for each type
+                for (MNode columnsNode in formNode.children("columns")) {
+                    String type = columnsNode.attribute("type")
+                    if (type != null && !type.isEmpty()) formListColInfoListMap.put(type, makeFormListColumnInfo(type))
+                }
+
+                // always populate for null (default) type
+                formListColInfoListMap.put(null, makeFormListColumnInfo(null))
+            }
         }
 
         MNode getFormNode() { formNode }
@@ -1379,6 +1398,8 @@ class ScreenForm {
         static String MSG_LETTERS = "Please enter only letters"
         static String MSG_EMAIL = "Please enter a valid email address"
         static String MSG_URL = "Please enter a valid URL"
+        static String VALIDATE_NUMBER = '!value||$root.moqui.isStringNumber(value)'
+        static String VALIDATE_NUMBER_INT = '!value||$root.moqui.isStringInteger(value)'
         ArrayList<Map<String, String>> getFieldValidationJsRules(MNode subFieldNode) {
             MNode validateNode = getFieldValidateNode(subFieldNode)
             if (validateNode == null) return null
@@ -1396,12 +1417,12 @@ class ScreenForm {
                     MNode child = (MNode) children.get(i)
                     if ("number-integer".equals(child.getName())) {
                         if (!foundNumber) {
-                            ruleList.add([expr:'!value || /^-{0,1}\\d*$/.test(value)', message:eci.l10nFacade.localize(MSG_NUMBER_INT)])
+                            ruleList.add([expr:VALIDATE_NUMBER_INT, message:eci.l10nFacade.localize(MSG_NUMBER_INT)])
                             foundNumber = true
                         }
                     } else if ("number-decimal".equals(child.getName())) {
                         if (!foundNumber) {
-                            ruleList.add([expr:"!value || +value === +value", message:eci.l10nFacade.localize(MSG_NUMBER)])
+                            ruleList.add([expr:VALIDATE_NUMBER, message:eci.l10nFacade.localize(MSG_NUMBER)])
                             foundNumber = true
                         }
                     } else if ("text-digits".equals(child.getName())) {
@@ -1435,18 +1456,18 @@ class ScreenForm {
                 String type = validateNode.attribute('type')
                 if (!foundNumber && type != null) {
                     if (type.endsWith("BigInteger") || type.endsWith("Long") || type.endsWith("Integer")) {
-                        ruleList.add([expr:'!value || /^-{0,1}\\d*$/.test(value)', message:eci.l10nFacade.localize(MSG_NUMBER_INT)])
+                        ruleList.add([expr:VALIDATE_NUMBER_INT, message:eci.l10nFacade.localize(MSG_NUMBER_INT)])
                     } else if (type.endsWith("BigDecimal") || type.endsWith("Double") || type.endsWith("Float") || type.endsWith("Number")) {
-                        ruleList.add([expr:"!value || +value === +value", message:eci.l10nFacade.localize(MSG_NUMBER)])
+                        ruleList.add([expr:VALIDATE_NUMBER, message:eci.l10nFacade.localize(MSG_NUMBER)])
                     }
                 }
             } else if (validateNode.name == "field") {
                 String type = validateNode.attribute('type')
                 if (type != null && (type.startsWith("number-") || type.startsWith("currency-"))) {
                     if (type.endsWith("integer")) {
-                        ruleList.add([expr:'!value || /^-{0,1}\\d+$/.test(value)', message:eci.l10nFacade.localize(MSG_NUMBER_INT)])
+                        ruleList.add([expr:VALIDATE_NUMBER_INT, message:eci.l10nFacade.localize(MSG_NUMBER_INT)])
                     } else {
-                        ruleList.add([expr:"!value || +value === +value", message:eci.l10nFacade.localize(MSG_NUMBER)])
+                        ruleList.add([expr:VALIDATE_NUMBER, message:eci.l10nFacade.localize(MSG_NUMBER)])
                     }
                 }
                 // bad idea, for create forms with optional PK messes it up: if (fieldNode."@is-pk" == "true") vcs.add("required")
@@ -1494,10 +1515,28 @@ class ScreenForm {
         ArrayList<MNode> getListHiddenFieldList() { return hiddenFieldList }
         ArrayList<String> getListHiddenFieldNameList() { return hiddenFieldNameList }
         Set<String> getListHiddenFieldNameSet() { return hiddenFieldNameSet }
-        boolean hasFormListColumns() { return formNode.children("form-list-column").size() > 0 }
+        boolean hasFormListColumns() { return formNode.hasChild("form-list-column") || formNode.hasChild("columns") }
 
         String getUserActiveFormConfigId(ExecutionContext ec) {
-            EntityValue fcu = ecfi.entityFacade.fastFindOne("moqui.screen.form.FormConfigUser", true, false, screenForm.location, ec.user.userId)
+            String columnsType = ecfi.getEci().contextStack.getByString("_uiType")
+            if (columnsType != null && columnsType.isEmpty()) columnsType = null
+            if (columnsType != null) {
+                // look up Enumeration record by enumCode (_uiType value) and enumTypeId to get enumId
+                String configTypeEnumId = ecfi.entityFacade.find("moqui.basic.Enumeration")
+                        .condition("enumTypeId", "FormConfigType").condition("enumCode", columnsType)
+                        .useCache(true).one()?.get("enumId")
+                if (configTypeEnumId != null) {
+                    EntityValue fcut = ecfi.entityFacade.fastFindOne("moqui.screen.form.FormConfigUserType", true,
+                            false, screenForm.location, ec.user.userId, configTypeEnumId)
+                    if (fcut != null) return (String) fcut.getNoCheckSimple("formConfigId")
+                }
+                // if a columnsType is specified and there is no matching saved FormConfig then don't default to saved general config,
+                //     defer to screen def columns config by type or screen def default columns config, so return null
+                return null
+            }
+
+            EntityValue fcu = ecfi.entityFacade.fastFindOne("moqui.screen.form.FormConfigUser", true,
+                    false, screenForm.location, ec.user.userId)
             if (fcu != null) return (String) fcu.getNoCheckSimple("formConfigId")
 
             // Maybe not do this at all and let it be a future thing where the user selects an active one from options available through groups
@@ -1532,12 +1571,46 @@ class ScreenForm {
                 // don't remember the results of this, is per-user so good only once (FormInstance is NOT per user!)
                 return makeDbFormListColumnInfo(formConfigId, eci)
             }
-            return formListColInfoList
+            String columnsType = ecfi.getEci().contextStack.getByString("_uiType")
+            if (columnsType != null && columnsType.isEmpty()) columnsType == null
+            if (formListColInfoListMap.containsKey(columnsType)) {
+                return formListColInfoListMap.get(columnsType)
+            } else {
+                return formListColInfoListMap.get(null)
+            }
         }
         /** convert form-list-column elements into a list, if there are no form-list-column elements uses fields limiting
          *    by logic about what actually gets rendered (so result can be used for display regardless of form def) */
-        private ArrayList<ArrayList<MNode>> makeFormListColumnInfo() {
-            ArrayList<MNode> formListColumnList = formNode.children("form-list-column")
+        private ArrayList<ArrayList<MNode>> makeFormListColumnInfo(String columnsType) {
+            ArrayList<MNode> formListColumnList = (ArrayList<MNode>) null
+
+            ArrayList<MNode> columnsNodeList = formNode.children("columns")
+            int columnsNodesSize = columnsNodeList.size()
+            // look for matching columns by specified type first
+            if (columnsType != null && !columnsType.isEmpty()) {
+                for (int i = 0; i < columnsNodesSize; i++) {
+                    MNode columnsNode = (MNode) columnsNodeList.get(i)
+                    if (columnsType.equals(columnsNode.attribute("type"))) {
+                        formListColumnList = columnsNode.children("column")
+                        break
+                    }
+                }
+            }
+            // if nothing found (or no columnsType) look for columns with no type
+            if (formListColumnList == null) {
+                for (int i = 0; i < columnsNodesSize; i++) {
+                    MNode columnsNode = (MNode) columnsNodeList.get(i)
+                    String type = columnsNode.attribute("type")
+                    if (type == null || type.isEmpty()) {
+                        formListColumnList = columnsNode.children("column")
+                        break
+                    }
+                }
+            }
+
+            // default to old form-list-column elements
+            if (formListColumnList == null) formListColumnList = formNode.children("form-list-column")
+
             int flcListSize = formListColumnList != null ? formListColumnList.size() : 0
 
             ArrayList<ArrayList<MNode>> colInfoList = new ArrayList<>()
@@ -2317,20 +2390,47 @@ class ScreenForm {
         String formLocation = cs.get("formLocation")
         if (!formLocation) { ec.messageFacade.addError("No form location specified, cannot save form configuration"); return; }
 
-        // see if there is an existing FormConfig record
+        // get formConfigId
         String formConfigId = cs.get("formConfigId")
-        if (!formConfigId) {
-            EntityValue fcu = ec.entity.find("moqui.screen.form.FormConfigUser")
-                    .condition("userId", userId).condition("formLocation", formLocation).useCache(false).one()
-            formConfigId = fcu != null ? fcu.formConfigId : null
+        // get configTypeEnumId
+        String configTypeEnumId = ec.contextStack.getByString("configTypeEnumId")
+        if (configTypeEnumId != null && configTypeEnumId.isEmpty()) configTypeEnumId = null
+        if (configTypeEnumId == null) {
+            String columnsType = ec.contextStack.getByString("_uiType")
+            if (columnsType != null && columnsType.isEmpty()) columnsType = null
+            if (columnsType != null) {
+                // look up Enumeration record by enumCode (_uiType value) and enumTypeId to get enumId
+                configTypeEnumId = ec.entityFacade.find("moqui.basic.Enumeration")
+                        .condition("enumTypeId", "FormConfigType").condition("enumCode", columnsType)
+                        .useCache(true).one()?.get("enumId")
+            }
+        }
+        // logger.warn("formConfigId ${formConfigId} configTypeEnumId ${configTypeEnumId}")
+
+        // see if there is an existing FormConfig record
+        if (formConfigId == null || formConfigId.isEmpty()) {
+            // if configTypeEnumId then use with FormConfigUserType, else use FormConfigUser to defer to screen def columns
+            //     config by type or screen def default columns config
+            if (configTypeEnumId != null) {
+                EntityValue fcut = ec.entityFacade.fastFindOne("moqui.screen.form.FormConfigUserType", true,
+                        false, formLocation, userId, configTypeEnumId)
+                formConfigId = (String) fcut?.getNoCheckSimple("formConfigId")
+            } else {
+                EntityValue fcu = ec.entity.find("moqui.screen.form.FormConfigUser")
+                        .condition("userId", userId).condition("formLocation", formLocation).useCache(false).one()
+                formConfigId = (String) fcu?.getNoCheckSimple("formConfigId")
+            }
         }
         String userCurrentFormConfigId = formConfigId
 
         // if FormConfig associated with this user but no other users or groups delete its FormConfigField
         //     records and remember its ID for create FormConfigField
         if (formConfigId) {
-            long userCount = ec.entity.find("moqui.screen.form.FormConfigUser")
-                    .condition("formConfigId", formConfigId).useCache(false).count()
+            long userCount = configTypeEnumId != null ?
+                    ec.entity.find("moqui.screen.form.FormConfigUserType").condition("formConfigId", formConfigId)
+                            .condition("configTypeEnumId", configTypeEnumId).useCache(false).count() :
+                    ec.entity.find("moqui.screen.form.FormConfigUser").condition("formConfigId", formConfigId)
+                            .useCache(false).count()
             if (userCount > 1) {
                 formConfigId = null
             } else {
@@ -2350,10 +2450,13 @@ class ScreenForm {
             if (formConfigId) {
                 // no other users on this form, and now being reset, so delete FormConfig
                 ec.entity.find("moqui.screen.form.FormConfigUser").condition("formConfigId", formConfigId).deleteAll()
+                ec.entity.find("moqui.screen.form.FormConfigUserType").condition("formConfigId", formConfigId).deleteAll()
                 ec.entity.find("moqui.screen.form.FormConfig").condition("formConfigId", formConfigId).deleteAll()
             } else if (userCurrentFormConfigId) {
                 // there is a FormConfig but other users are using it, so just remove this user
                 ec.entity.find("moqui.screen.form.FormConfigUser").condition("formConfigId", userCurrentFormConfigId)
+                        .condition("userId", userId).deleteAll()
+                ec.entity.find("moqui.screen.form.FormConfigUserType").condition("formConfigId", userCurrentFormConfigId)
                         .condition("userId", userId).deleteAll()
             }
             // to reset columns don't save new ones, just return after clearing out existing records
@@ -2366,8 +2469,13 @@ class ScreenForm {
             Map createResult = ec.service.sync().name("create#moqui.screen.form.FormConfig")
                     .parameters([userId:userId, formLocation:formLocation, description:"For user ${userId}"]).call()
             formConfigId = createResult.formConfigId
-            ec.service.sync().name("create#moqui.screen.form.FormConfigUser")
-                    .parameters([formConfigId:formConfigId, userId:userId, formLocation:formLocation]).call()
+            if (configTypeEnumId != null) {
+                ec.service.sync().name("create#moqui.screen.form.FormConfigUserType")
+                        .parameters([formConfigId:formConfigId, userId:userId, formLocation:formLocation, configTypeEnumId:configTypeEnumId]).call()
+            } else {
+                ec.service.sync().name("create#moqui.screen.form.FormConfigUser")
+                        .parameters([formConfigId:formConfigId, userId:userId, formLocation:formLocation]).call()
+            }
         }
 
         // save changes to DB
