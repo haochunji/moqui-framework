@@ -50,8 +50,12 @@ class NotificationMessageImpl implements NotificationMessage, Externalizable {
 
     private NotificationType type = (NotificationType) null
     private Boolean showAlert = (Boolean) null
-    private String emailTemplateId = (String) null
+    private Boolean alertNoAutoHide = (Boolean) null
     private Boolean persistOnSend = (Boolean) null
+    private String emailTemplateId = (String) null
+    private Boolean emailMessageSave = (Boolean) null
+
+    private Map<String, String> emailMessageIdByUserId = (Map<String, String>) null
 
     private transient ExecutionContextFactoryImpl ecfiTransient = (ExecutionContextFactoryImpl) null
 
@@ -210,6 +214,20 @@ class NotificationMessageImpl implements NotificationMessage, Externalizable {
         }
     }
 
+    @Override NotificationMessage alertNoAutoHide(boolean noAutoHide) { alertNoAutoHide = noAutoHide; return this }
+    @Override boolean isAlertNoAutoHide() {
+        if (alertNoAutoHide != null) {
+            return alertNoAutoHide.booleanValue()
+        } else {
+            EntityValue localNotTopic = getNotificationTopic()
+            if (localNotTopic != null && localNotTopic.alertNoAutoHide) {
+                return localNotTopic.alertNoAutoHide == 'Y'
+            } else {
+                return false
+            }
+        }
+    }
+
     @Override NotificationMessage emailTemplateId(String id) {
         emailTemplateId = id
         if (emailTemplateId != null && emailTemplateId.isEmpty()) emailTemplateId = null
@@ -227,8 +245,23 @@ class NotificationMessageImpl implements NotificationMessage, Externalizable {
             }
         }
     }
+    @Override NotificationMessage emailMessageSave(Boolean save) { emailMessageSave = save; return this }
+    @Override boolean isEmailMessageSave() {
+        if (emailMessageSave != null) {
+            return emailMessageSave.booleanValue()
+        } else {
+            EntityValue localNotTopic = getNotificationTopic()
+            if (localNotTopic != null && localNotTopic.emailMessageSave) {
+                return localNotTopic.emailMessageSave == 'Y'
+            } else {
+                return false
+            }
+        }
+    }
 
-    @Override NotificationMessage persistOnSend(boolean persist) { persistOnSend = persist; return this }
+    @Override Map<String, String> getEmailMessageIdByUserId() { return emailMessageIdByUserId }
+
+    @Override NotificationMessage persistOnSend(Boolean persist) { persistOnSend = persist; return this }
     @Override boolean isPersistOnSend() {
         if (persistOnSend != null) {
             return persistOnSend.booleanValue()
@@ -295,9 +328,22 @@ class NotificationMessageImpl implements NotificationMessage, Externalizable {
                     String emailAddress = userAccount?.emailAddress
                     if (emailAddress) {
                         // FUTURE: if there is an option to create EmailMessage record also configure emailTypeEnumId (maybe if emailTypeEnumId is set create EmailMessage)
-                        ecfi.serviceFacade.async().name("org.moqui.impl.EmailServices.send#EmailTemplate")
+                        Map<String, Object> sendOut = ecfi.serviceFacade.sync().name("org.moqui.impl.EmailServices.send#EmailTemplate")
                                 .parameters([emailTemplateId:localEmailTemplateId, toAddresses:emailAddress,
-                                    bodyParameters:wrappedMessageMap, toUserId:userId, createEmailMessage:false]).call()
+                                    bodyParameters:wrappedMessageMap, toUserId:userId, createEmailMessage:isEmailMessageSave()]).call()
+                        String emailMessageId = (String) sendOut.emailMessageId
+                        if (emailMessageId) {
+                            if (emailMessageIdByUserId == null) emailMessageIdByUserId = new HashMap<String, String>()
+                            emailMessageIdByUserId.put(userId, emailMessageId)
+                            String notificationMessageId = getNotificationMessageId()
+                            if (notificationMessageId) {
+                                // use store to update if was created above or create if not
+                                ecfi.service.sync().name("store", "moqui.security.user.NotificationMessageUser")
+                                        .parameters([notificationMessageId:notificationMessageId, userId:userId,
+                                                emailMessageId:emailMessageId, sentDate:new Timestamp(System.currentTimeMillis())])
+                                        .disableAuthz().call()
+                            }
+                        }
                     }
                 }
             }
@@ -355,7 +401,8 @@ class NotificationMessageImpl implements NotificationMessage, Externalizable {
     @Override Map<String, Object> getWrappedMessageMap() {
         EntityValue localNotTopic = getNotificationTopic()
         return [topic:topic, sentDate:sentDate, notificationMessageId:notificationMessageId, topicDescription:localNotTopic?.description,
-            message:getMessageMap(), title:getTitle(), link:getLink(), type:getType(), showAlert:isShowAlert(), persistOnSend:isPersistOnSend()]
+                message:getMessageMap(), title:getTitle(), link:getLink(), type:getType(), persistOnSend:isPersistOnSend(),
+                showAlert:isShowAlert(), alertNoAutoHide:isAlertNoAutoHide()]
     }
     @Override String getWrappedMessageJson() {
         Map<String, Object> wrappedMap = getWrappedMessageMap()
@@ -377,6 +424,7 @@ class NotificationMessageImpl implements NotificationMessage, Externalizable {
         this.linkText = nmbu.linkText
         if (nmbu.typeString) this.type = NotificationType.valueOf((String) nmbu.typeString)
         this.showAlert = nmbu.showAlert == 'Y'
+        this.alertNoAutoHide = nmbu.alertNoAutoHide == 'Y'
 
         EntityList nmuList = nmbu.findRelated("moqui.security.user.NotificationMessageUser",
                 [notificationMessageId:notificationMessageId] as Map<String, Object>, null, false, false)
@@ -395,6 +443,7 @@ class NotificationMessageImpl implements NotificationMessage, Externalizable {
         out.writeObject(getLink())
         out.writeObject(type)
         out.writeObject(showAlert)
+        out.writeObject(alertNoAutoHide)
         out.writeObject(persistOnSend)
     }
     @Override void readExternal(ObjectInput objectInput) throws IOException, ClassNotFoundException {
@@ -408,6 +457,7 @@ class NotificationMessageImpl implements NotificationMessage, Externalizable {
         linkText = (String) objectInput.readObject()
         type = (NotificationType) objectInput.readObject()
         showAlert = (Boolean) objectInput.readObject()
+        alertNoAutoHide = (Boolean) objectInput.readObject()
         persistOnSend = (Boolean) objectInput.readObject()
     }
 }

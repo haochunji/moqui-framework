@@ -13,6 +13,7 @@
  */
 package org.moqui.impl.service
 
+import com.cronutils.descriptor.CronDescriptor
 import com.cronutils.model.Cron
 import com.cronutils.model.CronType
 import com.cronutils.model.definition.CronDefinition
@@ -31,6 +32,7 @@ import org.slf4j.LoggerFactory
 
 import java.sql.Timestamp
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZonedDateTime
 
 /**
@@ -51,7 +53,7 @@ class ScheduledJobRunner implements Runnable {
 
     private final static CronDefinition cronDefinition = CronDefinitionBuilder.instanceDefinitionFor(CronType.QUARTZ)
     private final static CronParser parser = new CronParser(cronDefinition)
-    private final static Map<String, ExecutionTime> executionTimeByExpression = new HashMap<>()
+    private final static Map<String, Cron> cronByExpression = new HashMap<>()
     private long lastExecuteTime = 0
     private int executeCount = 0, totalJobsRun = 0, lastJobsActive = 0, lastJobsPaused = 0
 
@@ -229,15 +231,52 @@ class ScheduledJobRunner implements Runnable {
         }
     }
 
-    // ExecutionTime appears to be reusable, so cache by cronExpression
-    static ExecutionTime getExecutionTime(String cronExpression) {
-        ExecutionTime cachedEt = executionTimeByExpression.get(cronExpression)
-        if (cachedEt != null) return cachedEt
+    static Cron getCron(String cronExpression) {
+        Cron cachedCron = cronByExpression.get(cronExpression)
+        if (cachedCron != null) return cachedCron
 
         Cron cron = parser.parse(cronExpression)
-        ExecutionTime executionTime = ExecutionTime.forCron(cron)
+        cronByExpression.put(cronExpression, cron)
 
-        executionTimeByExpression.put(cronExpression, executionTime)
-        return executionTime
+        return cron
+    }
+
+    static ExecutionTime getExecutionTime(String cronExpression) { return ExecutionTime.forCron(getCron(cronExpression)) }
+
+    /** Use to determine if it is time to run again, if returns true then run and if false don't run.
+     * See if lastRun is before last scheduled run time based on cronExpression and nowTimestamp (defaults to current date/time) */
+    static boolean isLastRunBeforeLastSchedule(String cronExpression, Timestamp lastRun, String description, Timestamp nowTimestamp) {
+        try {
+            if (lastRun == (Timestamp) null) return true
+            ZonedDateTime now = nowTimestamp != (Timestamp) null ?
+                    ZonedDateTime.ofInstant(Instant.ofEpochMilli(nowTimestamp.getTime()), ZoneId.systemDefault()) :
+                    ZonedDateTime.now()
+            def lastRunDt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(lastRun.getTime()), now.getZone())
+
+            ExecutionTime executionTime = getExecutionTime(cronExpression)
+            ZonedDateTime lastSchedule = executionTime.lastExecution(now).get()
+
+            if (lastSchedule == null) return false
+            if (lastRunDt == null) return true
+
+            return lastRunDt.isBefore(lastSchedule)
+        } catch (Throwable t) {
+            logger.error("Error processing Cron Expression ${cronExpression} and Last Run ${lastRun} for ${description}, skipping", t)
+            return false
+        }
+    }
+
+    static String getCronDescription(String cronExpression, Locale locale, boolean handleInvalid) {
+        if (cronExpression == null || cronExpression.isEmpty()) return null
+        if (locale == null) locale = Locale.US
+        try {
+            return CronDescriptor.instance(locale).describe(getCron(cronExpression))
+        } catch (Exception e) {
+            if (handleInvalid) {
+                return "Invalid cron '${cronExpression}': ${e.message}"
+            } else {
+                throw e
+            }
+        }
     }
 }

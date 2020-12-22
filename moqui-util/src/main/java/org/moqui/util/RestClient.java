@@ -28,6 +28,7 @@ import org.eclipse.jetty.client.util.StringContentProvider;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.util.HttpCookieStore;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.util.thread.ScheduledExecutorScheduler;
@@ -297,14 +298,20 @@ public class RestClient {
             Request request = makeRequest(overrideRequestFactory != null ? overrideRequestFactory : getDefaultRequestFactory());
             // use a FutureResponseListener so we can set the timeout and max response size (old: response = request.send(); )
             FutureResponseListener listener = new FutureResponseListener(request, maxResponseSize);
-            request.send(listener);
-
-            ContentResponse response = listener.get(timeoutSeconds, TimeUnit.SECONDS);
-            return new RestResponse(this, response);
-        } catch (TimeoutException e) {
-            throw e;
+            try {
+                request.send(listener);
+                ContentResponse response = listener.get(timeoutSeconds, TimeUnit.SECONDS);
+                return new RestResponse(this, response);
+            } catch (TimeoutException e) {
+                logger.warn("RestClient request timed out after " + timeoutSeconds + "s to " + request.getURI());
+                // cancel listener, just in case
+                listener.cancel(true);
+                // abort request to make sure it gets closed and cleaned up
+                request.abort(e);
+                throw e;
+            }
         } catch (Exception e) {
-            throw new BaseException("Error calling REST request", e);
+            throw new BaseException("Error calling HTTP request", e);
         }
     }
 
@@ -638,9 +645,14 @@ public class RestClient {
         private final HttpClient httpClient;
 
         public SimpleRequestFactory() {
-            SslContextFactory sslContextFactory = new SslContextFactory.Client(true);
+            this(true, false);
+        }
+
+        public SimpleRequestFactory(boolean trustAll, boolean disableCookieManagement) {
+            SslContextFactory sslContextFactory = new SslContextFactory.Client(trustAll);
             sslContextFactory.setEndpointIdentificationAlgorithm(null);
             httpClient = new HttpClient(sslContextFactory);
+            if (disableCookieManagement) httpClient.setCookieStore(new HttpCookieStore.Empty());
             try { httpClient.start(); } catch (Exception e) { throw new BaseException("Error starting HTTP client", e); }
         }
 

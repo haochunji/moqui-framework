@@ -540,13 +540,37 @@ public class CollectionUtilities {
         List theList = (List) context.get(listName);
         if (theList == null) theList = new ArrayList();
 
+        List pageList = paginateList(theList, pageListName, context);
+        context.put(pageListName, pageList);
+    }
+    public static List paginateList(List theList, String pageListName, Map<String, Object> context) {
+        Integer pageRangeLow = (Integer) context.get(pageListName + "PageRangeLow");
+        Integer pageRangeHigh = (Integer) context.get(pageListName + "PageRangeHigh");
+        if (pageRangeLow == null || pageRangeHigh == null) {
+            paginateParameters(theList != null ? theList.size() : 0, pageListName, context);
+            pageRangeLow = (Integer) context.get(pageListName + "PageRangeLow");
+            pageRangeHigh = (Integer) context.get(pageListName + "PageRangeHigh");
+        }
+        return theList.subList(pageRangeLow - 1, pageRangeHigh);
+    }
+    public static Map paginateParameters(int listSize, String pageListName, Map<String, Object> context) {
         final Object pageIndexObj = context.get("pageIndex");
-        int pageIndex = ObjectUtilities.isEmpty(pageIndexObj) ? 0 : Integer.parseInt(pageIndexObj.toString());
+        int pageIndex = 0;
+        if (!ObjectUtilities.isEmpty(pageIndexObj)) {
+            try { pageIndex = Integer.parseInt(pageIndexObj.toString()); }
+            catch (Exception e) { /* just use the 0 default above */ }
+        }
+        if (pageIndex < 0) pageIndex = 0;
+
         final Object pageSizeObj = context.get("pageSize");
-        int pageSize = ObjectUtilities.isEmpty(pageSizeObj) ? 20 : Integer.parseInt(pageSizeObj.toString());
+        int pageSize = 20;
+        if (!ObjectUtilities.isEmpty(pageSizeObj)) {
+            try { pageSize = Integer.parseInt(pageSizeObj.toString()); }
+            catch (Exception e) { /* just use the 20 default above */ }
+        }
+        if (pageSize < 0) pageSize = 20;
 
-        int count = theList.size();
-
+        int count = listSize;
         // calculate the pagination values
         int maxIndex = (new BigDecimal(count - 1)).divide(new BigDecimal(pageSize), 0, RoundingMode.DOWN).intValue();
         int pageRangeLow = (pageIndex * pageSize) + 1;
@@ -554,13 +578,13 @@ public class CollectionUtilities {
         int pageRangeHigh = (pageIndex * pageSize) + pageSize;
         if (pageRangeHigh > count) pageRangeHigh = count;
 
-        List pageList = theList.subList(pageRangeLow - 1, pageRangeHigh);
-        context.put(pageListName, pageList);
         context.put(pageListName + "Count", count);
         context.put(pageListName + "PageIndex", pageIndex);
         context.put(pageListName + "PageSize", pageSize);
         context.put(pageListName + "PageMaxIndex", maxIndex);
         context.put(pageListName + "PageRangeLow", pageRangeLow);
         context.put(pageListName + "PageRangeHigh", pageRangeHigh);
+
+        return context;
     }
 }
