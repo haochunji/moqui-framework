@@ -698,14 +698,16 @@ class UserFacadeImpl implements UserFacade {
         return true
     }
 
-    @Override void logoutUser() {
+    void logoutLocal() {
         // before logout trigger the before-logout actions
         if (eci.getWebImpl() != null) eci.getWebImpl().runBeforeLogoutActions()
 
-        String userId = getUserId()
-
         // pop from user stack, also calls Shiro logout()
         popUser()
+    }
+
+    @Override void logoutUser() {
+        logoutLocal()
 
         // if there is a request and session invalidate and get new
         if (request != null) {
@@ -714,8 +716,10 @@ class UserFacadeImpl implements UserFacade {
             session = request.getSession()
         }
 
+        String userId = getUserId()
         // if userId set hasLoggedOut
         if (userId != null && !userId.isEmpty()) {
+            logger.info("Setting hasLoggedOut for user ${userId}")
             eci.serviceFacade.sync().name("update", "moqui.security.UserAccount")
                     .parameters([userId:userId, hasLoggedOut:"Y"]).disableAuthz().call()
         }
@@ -740,7 +744,8 @@ class UserFacadeImpl implements UserFacade {
 
         // check expire date
         Timestamp nowDate = getNowTimestamp()
-        if (nowDate > userLoginKey.getTimestamp("thruDate")) {
+        Timestamp thruDate = userLoginKey.getTimestamp("thruDate")
+        if (thruDate != (Timestamp) null && nowDate > thruDate) {
             eci.message.addError(eci.l10n.localize("Login key expired"))
             return false
         }

@@ -14,6 +14,7 @@
 package org.moqui.impl.screen
 
 import freemarker.template.Template
+import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.CompileStatic
 import org.moqui.BaseArtifactException
@@ -288,6 +289,7 @@ class ScreenRenderImpl implements ScreenRender {
         WebFacade web = ec.getWeb()
         if ((lastStandalone == null || lastStandalone.isEmpty()) && web != null)
             lastStandalone = (String) web.requestParameters.lastStandalone
+        ExecutionContextFactoryImpl.WebappInfo webappInfo = ec.ecfi.getWebappInfo(webappName)
 
         screenUrlInfo = ScreenUrlInfo.getScreenUrlInfo(this, rootScreenDef, originalScreenPathNameList, null,
                 ScreenUrlInfo.parseLastStandalone(lastStandalone, 0))
@@ -371,7 +373,6 @@ class ScreenRenderImpl implements ScreenRender {
             // if this transition has actions and request was not secure or any parameters were not in the body
             // return an error, helps prevent CSRF/XSRF attacks
             if (request != null && targetTransition.hasActionsOrSingleService()) {
-                ExecutionContextFactoryImpl.WebappInfo webappInfo = ec.ecfi.getWebappInfo(webappName)
                 String queryString = request.getQueryString()
 
                 // NOTE: We decode path parameter ourselves, so use getRequestURI instead of getPathInfo
@@ -453,7 +454,14 @@ class ScreenRenderImpl implements ScreenRender {
                 ((WebFacadeImpl) web).saveScreenLastInfo(screenPath.toString(), null)
             }
 
+            if (this.response != null && webappInfo != null) {
+                webappInfo.addHeaders("screen-transition", this.response)
+            }
+
             if ("none".equals(ri.type)) {
+                // for response type none also save parameters if configured to do so, and save errors if there are any
+                if (ri.saveParameters) wfi.saveRequestParametersToSession()
+                if (ec.message.hasError()) wfi.saveErrorParametersToSession()
                 if (logger.isTraceEnabled()) logger.trace("Transition ${screenUrlInfo.getFullPathNameList().join("/")} in ${System.currentTimeMillis() - renderStartTime}ms, type none response")
                 return
             }
@@ -580,7 +588,6 @@ class ScreenRenderImpl implements ScreenRender {
             boolean isBinary = tr == null && ResourceReference.isBinaryContentType(fileContentType)
             // if (isTraceEnabled) logger.trace("Content type for screen sub-content filename [${fileName}] is [${fileContentType}], default [${this.outputContentType}], is binary? ${isBinary}")
 
-            ExecutionContextFactoryImpl.WebappInfo webappInfo = ec.ecfi.getWebappInfo(webappName)
             if (isBinary) {
                 if (response != null) {
                     this.outputContentType = fileContentType
@@ -1559,9 +1566,10 @@ class ScreenRenderImpl implements ScreenRender {
         Map<String, Object> fieldValues = new LinkedHashMap<>()
 
         if ("true".equals(formNode.attribute("pass-through-parameters"))) {
-            UrlInstance currentFindUrl = getScreenUrlInstance().cloneUrlInstance().removeParameter("pageIndex")
+            UrlInstance currentFindUrl = getScreenUrlInstance().cloneUrlInstance()
                     .removeParameter("moquiFormName").removeParameter("moquiSessionToken")
                     .removeParameter("lastStandalone").removeParameter("formListFindId")
+                    .removeParameter("moquiRequestStartTime").removeParameter("webrootTT")
             fieldValues.putAll(currentFindUrl.getParameterMap())
         }
 
@@ -1573,46 +1581,149 @@ class ScreenRenderImpl implements ScreenRender {
         int afnSize = allFieldNodes.size()
         for (int i = 0; i < afnSize; i++) {
             MNode fieldNode = (MNode) allFieldNodes.get(i)
-            addFormFieldValue(fieldNode, fieldValues)
+            addFormFieldValue(fieldNode, fieldValues, false)
         }
         return fieldValues
     }
+
+    Map<String, Object> getFormListHeaderValues(MNode formNode) {
+        Map<String, Object> fieldValues = new LinkedHashMap<>()
+
+        // add hidden-parameters values
+        fieldValues.putAll(getFormHiddenParameters(formNode))
+
+        ArrayList<MNode> allFieldNodes = formNode.children("field")
+        int afnSize = allFieldNodes.size()
+        for (int i = 0; i < afnSize; i++) {
+            MNode fieldNode = (MNode) allFieldNodes.get(i)
+            addFormFieldValue(fieldNode, fieldValues, true)
+        }
+
+        // add orderByField
+        String orderByFieldAll = ec.contextStack.getByString("orderByField")
+        if (orderByFieldAll != null && !orderByFieldAll.isEmpty()) {
+            fieldValues.put("orderByField", new ArrayList(Arrays.asList(orderByFieldAll.split(","))))
+        } else {
+            fieldValues.put("orderByField", new ArrayList())
+        }
+
+        // formListFindId
+        String formListFindId = ec.contextStack.getByString("formListFindId")
+        if (formListFindId != null && !formListFindId.isEmpty()) fieldValues.put("formListFindId", formListFindId)
+        // pageSize
+        String listName = formNode.attribute("list")
+        Object pageSize = ec.contextStack.getByString(listName + "PageSize") ?: ec.contextStack.getByString("pageSize")
+        if (pageSize) fieldValues.put("pageSize", pageSize.toString())
+
+        return fieldValues
+    }
+
+    ArrayList<Map<String, Object>> getFormListRowValues(ScreenForm.FormListRenderInfo renderInfo) {
+        // get row data, aggregated if needed and row-actions run
+        ArrayList<Map<String, Object>> listObject = renderInfo.getListObject(true)
+        return transformFormListRowList(renderInfo, listObject)
+    }
+    ArrayList<Map<String, Object>> transformFormListRowList(ScreenForm.FormListRenderInfo renderInfo, ArrayList<Map<String, Object>> listObject) {
+        // convert raw data to formatted strings, fill in auxiliary values, etc
+        int rowsSize = listObject.size()
+        ArrayList<Map<String, Object>> outRows = new ArrayList<>(rowsSize)
+        for (int ri = 0; ri < rowsSize; ri++) {
+            Map<String, Object> row = (Map<String, Object>) listObject.get(ri)
+            outRows.add(transformFormListRow(renderInfo, row))
+        }
+        return outRows
+    }
+    Map<String, Object> transformFormListRow(ScreenForm.FormListRenderInfo renderInfo, Map<String, Object> row) {
+        ArrayList<MNode> fieldNodeList = renderInfo.getFormNode().children("field")
+        int fieldNodeListSize = fieldNodeList.size()
+        Set<String> displayedFields = renderInfo.getDisplayedFields()
+        Set<String> hiddenFields = renderInfo.getFormInstance().getListHiddenFieldNameSet()
+        // logger.warn("form ${renderInfo.formNode.attribute('name')} displayed ${displayedFields} hidden ${hiddenFields}")
+        ContextStack cs = ec.contextStack
+
+        // NOTE: not using copy constructor (new LinkedHashMap<>(row)), only want relevant output fields used for client rendering and client managed form fields
+        //  this avoids _entry, _has_next, _index auto added fields, per row service output, and much more
+        Map<String, Object> outRow = new LinkedHashMap<>()
+        for (int fni = 0; fni < fieldNodeListSize; fni++) {
+            MNode fieldNode = (MNode) fieldNodeList.get(fni)
+            String fieldName = fieldNode.attribute("name")
+            // logger.warn("form ${renderInfo.formNode.attribute( 'name')} field ${fieldName} raw val ${row.get(fieldName)}")
+            if (displayedFields.contains(fieldName) || hiddenFields.contains(fieldName)) {
+                // field values come from context so push current row, like SRI.startFormListRow() but slightly different approach with 2nd push to prevent potential writes
+                cs.push(row)
+                cs.push()
+                try {
+                    addFormFieldValue(fieldNode, outRow, false)
+                } finally {
+                    cs.pop()
+                    cs.pop()
+                }
+            }
+        }
+        // logger.warn("form-list row values\norig: ${JsonOutput.prettyPrint(JsonOutput.toJson(row))}\nout: ${JsonOutput.prettyPrint(JsonOutput.toJson(outRow))}")
+        return outRow
+    }
+
     // NOTE: this takes a fieldValues Map as a parameter to populate because a singe form field may have multiple values
-    void addFormFieldValue(MNode fieldNode, Map<String, Object> fieldValues) {
+    void addFormFieldValue(MNode fieldNode, Map<String, Object> fieldValues, boolean useHeader) {
         String fieldName = fieldNode.attribute("name")
 
         MNode activeSubNode = (MNode) null
-        ArrayList<MNode> condFieldNodeList = fieldNode.children("conditional-field")
-        for (int j = 0; j < condFieldNodeList.size(); j++) {
-            MNode condFieldNode = (MNode) condFieldNodeList.get(j)
-            String condition = condFieldNode.attribute("condition")
-            if (condition == null || condition.isEmpty()) {
-                logger.warn("Screen ${activeScreenDef.getScreenName()} field ${fieldName} conditional-field has no condition, skipping")
-                continue
+        if (useHeader) {
+            activeSubNode = fieldNode.first("header-field")
+        } else {
+            ArrayList<MNode> condFieldNodeList = fieldNode.children("conditional-field")
+            for (int j = 0; j < condFieldNodeList.size(); j++) {
+                MNode condFieldNode = (MNode) condFieldNodeList.get(j)
+                String condition = condFieldNode.attribute("condition")
+                if (condition == null || condition.isEmpty()) {
+                    logger.warn("Screen ${activeScreenDef.getScreenName()} field ${fieldName} conditional-field has no condition, skipping")
+                    continue
+                }
+                if (ec.resourceFacade.condition(condition, null)) activeSubNode = condFieldNode
             }
-            if (ec.resourceFacade.condition(condition, null)) activeSubNode = condFieldNode
+            if (activeSubNode == null) activeSubNode = fieldNode.first("default-field")
         }
-        if (activeSubNode == null) activeSubNode = fieldNode.first("default-field")
+        // logger.warn("field ${fieldName} activeSubNode ${activeSubNode?.toString()}")
         if (activeSubNode == null) return
 
         ArrayList<MNode> childNodeList = activeSubNode.getChildren()
-        for (int k = 0; k < childNodeList.size(); k++) {
+        int childNodeListSize = childNodeList.size()
+
+        // check 'set' elements used with widget-template-include
+        ArrayList<MNode> setNodeList = new ArrayList<>(childNodeListSize)
+        for (int k = 0; k < childNodeListSize; k++) {
             MNode widgetNode = (MNode) childNodeList.get(k)
+            if ("set".equals(widgetNode.getName())) setNodeList.add(widgetNode)
+        }
+        if (setNodeList.size() > 0) {
+            ec.contextStack.push()
+            for (int si = 0; si < setNodeList.size(); si++) { setInContext((MNode) setNodeList.get(si)) }
+        }
+
+        for (int k = 0; k < childNodeListSize; k++) {
+            MNode widgetNode = (MNode) childNodeList.get(k)
+            String widgetName = widgetNode.getName()
+            // set element used with widget-template-include, skip here
+            if ("set".equals(widgetName)) continue
 
             String valuePlainString = getFieldValuePlainString(fieldNode, "")
             if (valuePlainString == null || valuePlainString.isEmpty())
                 valuePlainString = ec.resourceFacade.expandNoL10n(widgetNode.attribute("no-current-selected-key"), null)
             if (valuePlainString != null && !valuePlainString.isEmpty() && valuePlainString.charAt(0) == ('[' as char))
                 valuePlainString = valuePlainString.substring(1, valuePlainString.length() - 1).replaceAll(" ", "")
-            String[] currentValueArr = valuePlainString != null ? valuePlainString.split(",") : null
+            String[] currentValueArr = valuePlainString != null && !valuePlainString.isEmpty() ? valuePlainString.split(",") : null
 
-            String widgetName = widgetNode.getName()
             if ("drop-down".equals(widgetName)) {
                 boolean allowMultiple = "true".equals(ec.resourceFacade.expandNoL10n(widgetNode.attribute("allow-multiple"), null))
                 if (allowMultiple) {
-                    fieldValues.put(fieldName, new ArrayList(Arrays.asList(currentValueArr)))
+                    fieldValues.put(fieldName, currentValueArr != null ? new ArrayList(Arrays.asList(currentValueArr)) : null)
+                    fieldValues.put(fieldName + "_op", "in")
                 } else {
-                    fieldValues.put(fieldName, currentValueArr[0])
+                    fieldValues.put(fieldName, currentValueArr != null && currentValueArr.length > 0 ? currentValueArr[0] : null)
+                }
+                if (ec.resourceFacade.expandNoL10n(widgetNode.attribute("show-not"), "") == "true") {
+                    fieldValues.put(fieldName + "_not", ec.contextStack.getByString(fieldName + "_not") ?: "N")
                 }
             } else if ("text-line".equals(widgetName)) {
                 fieldValues.put(fieldName, getFieldValueString(widgetNode))
@@ -1620,25 +1731,24 @@ class ScreenRenderImpl implements ScreenRender {
                 if ("true".equals(ec.resourceFacade.expandNoL10n(widgetNode.attribute("all-checked"), null))) {
                     // get all options and add ArrayList
                     Set<String> fieldOptionKeys = getFieldOptions(widgetNode).keySet()
-                    if (fieldOptionKeys.size() == 1) fieldValues.put(fieldName, fieldOptionKeys.first())
-                    else fieldValues.put(fieldName, new ArrayList(fieldOptionKeys))
+                    fieldValues.put(fieldName, new ArrayList(fieldOptionKeys))
                 } else {
-                    if (currentValueArr.length == 1) fieldValues.put(fieldName, currentValueArr[0])
+                    if (currentValueArr == null || currentValueArr.length == 0) fieldValues.put(fieldName, new ArrayList())
                     else fieldValues.put(fieldName, new ArrayList(Arrays.asList(currentValueArr)))
                 }
             } else if ("date-find".equals(widgetName)) {
                 String type = widgetNode.attribute("type")
                 String defaultFormat = "date".equals(type) ? "yyyy-MM-dd" : ("time".equals(type) ? "HH:mm" : "yyyy-MM-dd HH:mm")
-                String fieldValueFrom = ec.l10nFacade.format(ec.getWeb()?.getParameters()?.get(fieldName + "_from") ?: widgetNode.attribute("default-value-from"), defaultFormat)
-                String fieldValueThru = ec.l10nFacade.format(ec.getWeb()?.getParameters()?.get(fieldName + "_thru") ?: widgetNode.attribute("default-value-thru"), defaultFormat)
+                String fieldValueFrom = ec.l10nFacade.format(ec.contextStack.getByString(fieldName + "_from") ?: widgetNode.attribute("default-value-from"), defaultFormat)
+                String fieldValueThru = ec.l10nFacade.format(ec.contextStack.getByString(fieldName + "_thru") ?: widgetNode.attribute("default-value-thru"), defaultFormat)
                 fieldValues.put(fieldName + "_from", fieldValueFrom)
                 fieldValues.put(fieldName + "_thru", fieldValueThru)
             } else if ("date-period".equals(widgetName)) {
-                fieldValues.put(fieldName + "_poffset", ec.getWeb()?.getParameters()?.get(fieldName + "_poffset"))
-                fieldValues.put(fieldName + "_period", ec.getWeb()?.getParameters()?.get(fieldName + "_period"))
-                fieldValues.put(fieldName + "_pdate", ec.getWeb()?.getParameters()?.get(fieldName + "_pdate"))
-                fieldValues.put(fieldName + "_from", ec.getWeb()?.getParameters()?.get(fieldName + "_from"))
-                fieldValues.put(fieldName + "_thru", ec.getWeb()?.getParameters()?.get(fieldName + "_thru"))
+                fieldValues.put(fieldName + "_poffset", ec.contextStack.getByString(fieldName + "_poffset"))
+                fieldValues.put(fieldName + "_period", ec.contextStack.getByString(fieldName + "_period"))
+                fieldValues.put(fieldName + "_pdate", ec.contextStack.getByString(fieldName + "_pdate"))
+                fieldValues.put(fieldName + "_from", ec.contextStack.getByString(fieldName + "_from"))
+                fieldValues.put(fieldName + "_thru", ec.contextStack.getByString(fieldName + "_thru"))
             } else if ("date-time".equals(widgetName)) {
                 String type = widgetNode.attribute("type")
                 String javaFormat = "date".equals(type) ? "yyyy-MM-dd" : ("time".equals(type) ? "HH:mm" : "yyyy-MM-dd HH:mm")
@@ -1688,26 +1798,33 @@ class ScreenRenderImpl implements ScreenRender {
             } else if ("radio".equals(widgetName)) {
                 fieldValues.put(fieldName, getFieldValueString(fieldNode, widgetNode.attribute("no-current-selected-key"), null))
             } else if ("range-find".equals(widgetName)) {
-                fieldValues.put(fieldName + "_from", ec.getWeb()?.getParameters()?.get(fieldName + "_from"))
-                fieldValues.put(fieldName + "_thru", ec.getWeb()?.getParameters()?.get(fieldName + "_thru"))
+                fieldValues.put(fieldName + "_from", ec.contextStack.getByString(fieldName + "_from"))
+                fieldValues.put(fieldName + "_thru", ec.contextStack.getByString(fieldName + "_thru"))
             } else if ("text-area".equals(widgetName)) {
                 fieldValues.put(fieldName, getFieldValueString(widgetNode))
             } else if ("text-find".equals(widgetName)) {
                 fieldValues.put(fieldName, getFieldValueString(widgetNode))
+
                 String opName = fieldName + "_op"
-                String opValue = ec.getWeb()?.getParameters()?.get(opName) ?: widgetNode.attribute("default-operator") ?: "contains"
+                String opValue = ec.contextStack.getByString(opName) ?: widgetNode.attribute("default-operator") ?: "contains"
                 fieldValues.put(opName, opValue)
+
                 String notName = fieldName + "_not"
-                String notValue = ec.getWeb()?.getParameters()?.get(notName)
-                fieldValues.put(notName, notValue)
+                String notValue = ec.contextStack.getByString(notName)
+                fieldValues.put(notName, notValue ?: "N")
+
                 String icName = fieldName + "_ic"
-                String icValue = ec.getWeb()?.getParameters()?.get(icName)
-                fieldValues.put(icName, icValue)
+                String icAttr = widgetNode.attribute("ignore-case")
+                String icValue = ec.contextStack.getByString(icName)
+                if ((icValue == null || icValue.isEmpty()) && (icAttr == null || icAttr.isEmpty() || icAttr.equals("true"))) icValue = "Y"
+                fieldValues.put(icName, icValue ?: "N")
             } else {
                 // unknown/other type
                 fieldValues.put(fieldName, valuePlainString)
             }
         }
+
+        if (setNodeList.size() > 0) ec.contextStack.pop()
     }
 
     LinkedHashMap<String, String> getFieldOptions(MNode widgetNode) {
@@ -1832,6 +1949,53 @@ class ScreenRenderImpl implements ScreenRender {
         return transValue
     }
 
+    Map<String, Object> makeFormListSingleMap(ScreenForm.FormListRenderInfo renderInfo, Map<String, Object> listEntry, UrlInstance formTransitionUrl) {
+        MNode formNode = renderInfo.getFormNode()
+        Map<String, Object> outMap = new LinkedHashMap<>()
+
+        // add url parameter map pass through parameters first, others override
+        outMap.putAll(formTransitionUrl.getParameterMap())
+        outMap.putAll(getFormHiddenParameters(formNode))
+
+        // listEntry fields before boilerplate fields below
+        Map<String, Object> row = transformFormListRow(renderInfo, listEntry)
+        outMap.putAll(row)
+
+        outMap.put("moquiFormName", formNode.attribute("name"))
+        outMap.put("pageIndex", ec.contextStack.getByString("pageIndex") ?: "0")
+        String orderByField = ec.contextStack.getByString("orderByField")
+        if (orderByField) outMap.put("orderByField", orderByField)
+
+        return outMap
+    }
+    Map<String, Object> makeFormListMultiMap(ScreenForm.FormListRenderInfo renderInfo, ArrayList<Map<String, Object>> listObject, UrlInstance formTransitionUrl) {
+        MNode formNode = renderInfo.getFormNode()
+        Map<String, Object> outMap = new LinkedHashMap<>()
+
+        // add url parameter map pass through parameters first, others override
+        outMap.putAll(formTransitionUrl.getParameterMap())
+        outMap.putAll(getFormHiddenParameters(formNode))
+
+        // transform listObject rows to one big Map with _${rowNum} field name suffix
+        int listSize = listObject.size()
+        for (int i = 0; i < listSize; i++) {
+            Map<String, Object> listEntry = (Map<String, Object>) listObject.get(i)
+            Map<String, Object> row = transformFormListRow(renderInfo, listEntry)
+            for (Map.Entry<String, Object> mapEntry in row.entrySet()) {
+                outMap.put(mapEntry.getKey() + "_" + i, mapEntry.getValue())
+            }
+        }
+
+        outMap.put("moquiFormName", formNode.attribute("name"))
+        outMap.put("pageIndex", ec.contextStack.getByString("pageIndex") ?: "0")
+        String orderByField = ec.contextStack.getByString("orderByField")
+        if (orderByField) outMap.put("orderByField", orderByField)
+
+        outMap.put("_isMulti", "true")
+
+        return outMap
+    }
+
     Map<String, String> getFormHiddenParameters(MNode formNode) {
         Map<String, String> parmMap = new LinkedHashMap<>()
         if (formNode == null) return parmMap
@@ -1875,7 +2039,7 @@ class ScreenRenderImpl implements ScreenRender {
             MNode doNode = (MNode) doNodeList.get(i)
             String doField = doNode.attribute("field")
             String doParameter = doNode.attribute("parameter") ?: doField
-            Object contextVal = ec.context.get(doField)
+            Object contextVal = ec.contextStack.get(doField)
             if (ObjectUtilities.isEmpty(contextVal) && ec.contextStack.get("_formMap") != null)
                 contextVal = ((Map) ec.contextStack.get("_formMap")).get(doField)
             if (ObjectUtilities.isEmpty(contextVal)) {
@@ -1958,11 +2122,18 @@ class ScreenRenderImpl implements ScreenRender {
     }
 
     ArrayList<String> getThemeValues(String resourceTypeEnumId) {
-        ArrayList<String> cachedList = (ArrayList<String>) curThemeValuesByType.get(resourceTypeEnumId)
-        if (cachedList != null) return cachedList
+        return getThemeValues(resourceTypeEnumId, null)
+    }
+    ArrayList<String> getThemeValues(String resourceTypeEnumId, String screenThemeId) {
+        boolean currentTheme = screenThemeId == null || screenThemeId.isEmpty() || "null".equals(screenThemeId)
+        if (currentTheme) {
+            screenThemeId = getCurrentThemeId()
+            ArrayList<String> cachedList = (ArrayList<String>) curThemeValuesByType.get(resourceTypeEnumId)
+            if (cachedList != null) return cachedList
+        }
 
         EntityList strList = sfi.ecfi.entityFacade.find("moqui.screen.ScreenThemeResource")
-                .condition("screenThemeId", getCurrentThemeId()).condition("resourceTypeEnumId", resourceTypeEnumId)
+                .condition("screenThemeId", screenThemeId).condition("resourceTypeEnumId", resourceTypeEnumId)
                 .orderBy("sequenceNum").useCache(true).disableAuthz().list()
         int strListSize = strList.size()
         ArrayList<String> values = new ArrayList<>(strListSize)
@@ -1972,7 +2143,7 @@ class ScreenRenderImpl implements ScreenRender {
             if (resourceValue != null && !resourceValue.isEmpty()) values.add(resourceValue)
         }
 
-        curThemeValuesByType.put(resourceTypeEnumId, values)
+        if (currentTheme) curThemeValuesByType.put(resourceTypeEnumId, values)
         return values
     }
     // NOTE: this is called a LOT during screen renders, for links/buttons/etc
@@ -1998,11 +2169,11 @@ class ScreenRenderImpl implements ScreenRender {
     }
 
     List<Map> getMenuData(ArrayList<String> pathNameList) {
-        if (!ec.user.userId) { ec.web.sendError(401, "Authentication required", null); return null }
+        if (!ec.user.userId) { ec.web.sendJsonError(401, "Authentication required", null); return null }
         ScreenUrlInfo fullUrlInfo = ScreenUrlInfo.getScreenUrlInfo(this, rootScreenDef, pathNameList, null, 0)
-        if (!fullUrlInfo.targetExists) { ec.web.sendError(404, "Screen not found for path ${pathNameList}", null); return null }
+        if (!fullUrlInfo.targetExists) { ec.web.sendJsonError(404, "Screen not found for path ${pathNameList}", null); return null }
         UrlInstance fullUrlInstance = fullUrlInfo.getInstance(this, null)
-        if (!fullUrlInstance.isPermitted()) { ec.web.sendError(403, "View not permitted for path ${pathNameList}", null); return null }
+        if (!fullUrlInstance.isPermitted()) { ec.web.sendJsonError(403, "View not permitted for path ${pathNameList}", null); return null }
 
         ArrayList<String> fullPathList = fullUrlInfo.fullPathNameList
         int fullPathSize = fullPathList.size()
@@ -2066,13 +2237,12 @@ class ScreenRenderImpl implements ScreenRender {
 
                 String image = sui.menuImage
                 String imageType = sui.menuImageType
-                if (image != null && image.length() > 0 && (imageType == null || imageType.length() == 0 || "url-screen".equals(imageType)))
+                if (image != null && !image.isEmpty() && (imageType == null || imageType.isEmpty() || "url-screen".equals(imageType)))
                     image = buildUrl(image).path
 
                 boolean active = (nextItem == subscreensItem.name)
                 Map itemMap = [name:subscreensItem.name, title:ec.resource.expand(subscreensItem.menuTitle, ""),
-                               path:screenPath, pathWithParams:pathWithParams, image:image]
-                if ("icon".equals(imageType)) itemMap.imageType = "icon"
+                               path:screenPath, pathWithParams:pathWithParams, image:image, imageType:imageType]
                 if (active) itemMap.active = true
                 if (screenUrlInstance.disableLink) itemMap.disableLink = true
                 subscreensList.add(itemMap)
@@ -2084,8 +2254,15 @@ class ScreenRenderImpl implements ScreenRender {
             String curPathWithParams = curScreenPath
             String curParmString = curUrlInstance.getParameterString()
             if (!curParmString.isEmpty()) curPathWithParams = curPathWithParams + '?' + curParmString
+
+            ScreenUrlInfo sui = curUrlInstance.sui
+            String image = sui.menuImage
+            String imageType = sui.menuImageType
+            if (image != null && !image.isEmpty() && (imageType == null || imageType.isEmpty() || "url-screen".equals(imageType)))
+                image = buildUrl(image).path
+
             menuDataList.add([name:pathItem, title:curScreen.getDefaultMenuName(), subscreens:subscreensList, path:curScreenPath,
-                    pathWithParams:curPathWithParams, hasTabMenu:curScreen.hasTabMenu(), renderModes:curScreen.renderModes])
+                    pathWithParams:curPathWithParams, hasTabMenu:curScreen.hasTabMenu(), renderModes:curScreen.renderModes, image:image, imageType:imageType])
             // not needed: screenStatic:curScreen.isServerStatic(renderMode)
         }
 
@@ -2098,7 +2275,7 @@ class ScreenRenderImpl implements ScreenRender {
 
         String lastImage = fullUrlInfo.menuImage
         String lastImageType = fullUrlInfo.menuImageType
-        if (lastImage != null && lastImage.length() > 0 && (lastImageType == null || lastImageType.length() == 0 || "url-screen".equals(lastImageType)))
+        if (lastImage != null && !lastImage.isEmpty() && (lastImageType == null || lastImageType.isEmpty() || "url-screen".equals(lastImageType)))
             lastImage = buildUrl(lastImage).url
         String lastTitle = fullUrlInfo.targetScreen.getDefaultMenuName()
         if (lastTitle.contains('${')) lastTitle = ec.resourceFacade.expand(lastTitle, "")
@@ -2108,9 +2285,8 @@ class ScreenRenderImpl implements ScreenRender {
             int extraPathListSize = extraPathList.size()
             for (int i = 0; i < extraPathListSize; i++) extraPathList.set(i, StringUtilities.urlEncodeIfNeeded((String) extraPathList.get(i)))
         }
-        Map lastMap = [name:lastPathItem, title:lastTitle, path:lastPath, pathWithParams:currentPath.toString(), image:lastImage,
+        Map lastMap = [name:lastPathItem, title:lastTitle, path:lastPath, pathWithParams:currentPath.toString(), image:lastImage, imageType:lastImageType,
                 extraPathList:extraPathList, screenDocList:screenDocList, renderModes:fullUrlInfo.targetScreen.renderModes]
-        if ("icon".equals(lastImageType)) lastMap.imageType = "icon"
         menuDataList.add(lastMap)
         // not needed: screenStatic:fullUrlInfo.targetScreen.isServerStatic(renderMode)
 

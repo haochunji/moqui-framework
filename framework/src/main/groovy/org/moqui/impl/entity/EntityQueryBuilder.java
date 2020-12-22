@@ -16,6 +16,7 @@ package org.moqui.impl.entity;
 import org.moqui.entity.EntityException;
 import org.moqui.impl.entity.EntityJavaUtil.EntityConditionParameter;
 import org.moqui.impl.entity.EntityJavaUtil.FieldOrderOptions;
+import org.moqui.util.LiteStringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,7 +25,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Map;
 
 public class EntityQueryBuilder {
     protected static final Logger logger = LoggerFactory.getLogger(EntityQueryBuilder.class);
@@ -44,6 +45,7 @@ public class EntityQueryBuilder {
     private ResultSet rs = null;
     protected Connection connection = null;
     private boolean externalConnection = false;
+    private boolean isFindOne = false;
 
     public EntityQueryBuilder(EntityDefinition entityDefinition, EntityFacadeImpl efi) {
         this.mainEntityDefinition = entityDefinition;
@@ -61,6 +63,8 @@ public class EntityQueryBuilder {
         connection = c;
         externalConnection = true;
     }
+
+    public void isFineOne() { isFindOne = true; }
 
     protected static void handleSqlException(Exception e, String sql) {
         throw new EntityException("SQL Exception with statement:" + sql + "; " + e.toString(), e);
@@ -84,7 +88,7 @@ public class EntityQueryBuilder {
     ResultSet executeQuery() throws SQLException {
         if (ps == null) throw new IllegalStateException("Cannot Execute Query, no PreparedStatement in place");
         boolean isError = false;
-        boolean queryStats = efi.getQueryStats();
+        boolean queryStats = !isFindOne && efi.getQueryStats();
         long beforeQuery = queryStats ? System.nanoTime() : 0;
         try {
             final long timeBefore = isDebugEnabled ? System.currentTimeMillis() : 0L;
@@ -104,9 +108,10 @@ public class EntityQueryBuilder {
 
     int executeUpdate() throws SQLException {
         if (ps == null) throw new IllegalStateException("Cannot Execute Update, no PreparedStatement in place");
-        boolean isError = false;
-        boolean queryStats = efi.getQueryStats();
-        long beforeQuery = queryStats ? System.nanoTime() : 0;
+        // NOTE 20200704: removed query stat tracking for updates
+        // boolean isError = false;
+        // boolean queryStats = efi.getQueryStats();
+        // long beforeQuery = queryStats ? System.nanoTime() : 0;
         try {
             final long timeBefore = isDebugEnabled ? System.currentTimeMillis() : 0L;
             final int rows = ps.executeUpdate();
@@ -116,11 +121,11 @@ public class EntityQueryBuilder {
                     rows + "] rows");
             return rows;
         } catch (SQLException sqle) {
-            isError = true;
+            // isError = true;
             logger.warn("Error in JDBC update for SQL " + finalSql);
             throw sqle;
-        } finally {
-            if (queryStats) efi.saveQueryStats(mainEntityDefinition, finalSql, System.nanoTime() - beforeQuery, isError);
+        // } finally {
+            // if (queryStats) efi.saveQueryStats(mainEntityDefinition, finalSql, System.nanoTime() - beforeQuery, isError);
         }
     }
 
@@ -220,7 +225,7 @@ public class EntityQueryBuilder {
         }
     }
 
-    public void addWhereClause(FieldInfo[] pkFieldArray, HashMap<String, Object> valueMapInternal) {
+    public void addWhereClause(FieldInfo[] pkFieldArray, LiteStringMap valueMapInternal) {
         sqlTopLevel.append(" WHERE ");
         int sizePk = pkFieldArray.length;
         for (int i = 0; i < sizePk; i++) {
@@ -228,7 +233,7 @@ public class EntityQueryBuilder {
             if (fieldInfo == null) break;
             if (i > 0) sqlTopLevel.append(" AND ");
             sqlTopLevel.append(fieldInfo.getFullColumnName()).append("=?");
-            parameters.add(new EntityJavaUtil.EntityConditionParameter(fieldInfo, valueMapInternal.get(fieldInfo.name), this));
+            parameters.add(new EntityJavaUtil.EntityConditionParameter(fieldInfo, valueMapInternal.getByIString(fieldInfo.name, fieldInfo.index), this));
         }
     }
 }

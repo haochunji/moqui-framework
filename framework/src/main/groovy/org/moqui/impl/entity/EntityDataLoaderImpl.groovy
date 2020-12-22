@@ -281,7 +281,13 @@ class EntityDataLoaderImpl implements EntityDataLoader {
             }
 
             // load each file in its own transaction
-            for (String location in this.locationList) loadSingleFile(location, exh, ech, ejh)
+            for (String location in this.locationList) {
+                try {
+                    loadSingleFile(location, exh, ech, ejh)
+                } catch (Throwable t) {
+                    logger.error("Skipping to next file after error: ${t.toString()}")
+                }
+            }
         })
 
         if (reenableEeca) eci.artifactExecutionFacade.enableEntityEca()
@@ -765,19 +771,21 @@ class EntityDataLoaderImpl implements EntityDataLoader {
                                 valueHandler.handlePlainMap(currentEntityDef.getFullEntityName(), valueMap)
                                 valuesRead++
                             }
-                            currentEntityDef = (EntityDefinition) null
                         } catch (EntityException e) {
                             throw new SAXException("Error storing entity [${currentEntityDef.getFullEntityName()}] value (line ${locator?.lineNumber}): " + e.toString(), e)
+                        } finally {
+                            currentEntityDef = (EntityDefinition) null
                         }
                     } else {
                         try {
                             ServiceCallSync currentScs = edli.sfi.sync().name(entityOperation, currentEntityDef.getFullEntityName()).parameters(valueMap)
                             valueHandler.handleService(currentScs)
                             valuesRead++
-                            currentEntityDef = (EntityDefinition) null
-                            entityOperation = (String) null
                         } catch (Exception e) {
                             throw new SAXException("Error running service [${currentServiceDef.serviceName}] (line ${locator?.lineNumber}): " + e.toString(), e)
+                        } finally {
+                            currentEntityDef = (EntityDefinition) null
+                            entityOperation = (String) null
                         }
                     }
                 } else if (currentServiceDef != null) {
@@ -785,9 +793,10 @@ class EntityDataLoaderImpl implements EntityDataLoader {
                         ServiceCallSync currentScs = edli.sfi.sync().name(currentServiceDef.serviceName).parameters(valueMap)
                         valueHandler.handleService(currentScs)
                         valuesRead++
-                        currentServiceDef = (ServiceDefinition) null
                     } catch (Exception e) {
                         throw new SAXException("Error running service [${currentServiceDef.serviceName}] (line ${locator?.lineNumber}): " + e.toString(), e)
+                    } finally {
+                        currentServiceDef = (ServiceDefinition) null
                     }
                 }
             }
@@ -959,7 +968,7 @@ class EntityDataLoaderImpl implements EntityDataLoader {
                     continue
                 }
 
-                Map value = [:]
+                Map<String, Object> value = [:]
                 if (edli.defaultValues) value.putAll(edli.defaultValues)
                 value.putAll((Map) valueObj)
 

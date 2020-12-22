@@ -245,7 +245,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="userId" type="id" is-pk="true"/>
         <field name="username" type="text-medium" enable-audit-log="true">
             <description>The username used along with the password to login</description></field>
-        <field name="userFullName" type="text-medium"><description>User's first, middle, last, etc name</description></field>
+        <field name="userFullName" type="text-medium" enable-audit-log="update">
+            <description>User's first, middle, last, etc name</description></field>
         <field name="currentPassword" type="text-medium">
             <description>NOTE: not an encrypted field because one way hash encryption used for it</description></field>
         <field name="resetPassword" type="text-medium">
@@ -259,15 +260,17 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="publicKey" type="text-long"><description>RSA public key for key based authentication</description></field>
         <field name="hasLoggedOut" type="text-indicator"><description>Set to Y when user logs out and to N when user logs in.
             If user is session authenticated on request and this is Y then treat as if user not authenticated.</description></field>
-        <field name="disabled" type="text-indicator"/>
+        <field name="disabled" type="text-indicator" default="'N'" enable-audit-log="update"/>
         <field name="disabledDateTime" type="date-time"/>
+        <field name="terminateDate" type="date-time" enable-audit-log="true">
+            <description>If set then user may not login after this date, and no notifications will be sent after this date.</description></field>
         <field name="successiveFailedLogins" type="number-integer"/>
         <field name="requirePasswordChange" type="text-indicator"/>
         <field name="currencyUomId" type="id"/>
         <field name="locale" type="text-short"/>
         <field name="timeZone" type="text-short"/>
         <field name="externalUserId" type="text-medium"/>
-        <field name="emailAddress" type="text-medium">
+        <field name="emailAddress" type="text-medium" enable-audit-log="update">
             <description>The email address to use for forgot password emails and other system messages.</description></field>
         <field name="ipAllowed" type="text-medium">
             <description>If specified only allow login from matching IP4 address. Comma separated patterns where each pattern has 4
@@ -451,8 +454,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="alertNoAutoHide" type="text-indicator"/>
         <field name="persistOnSend" type="text-indicator"/>
         <field name="isPrivate" type="text-indicator"><description>If Y user must be associated to see it or receive notifications.</description></field>
-        <field name="receiveNotifications" type="text-indicator"><description>If Y all applicable users will be sent
-            notification messages. If N users must subscribe (NotificationTopicUser) to receive messages.</description></field>
+        <field name="receiveNotifications" type="text-indicator"><description>For each User if there is no NotificationTopicUser.receiveNotifications value then use this as the default, this defaults to N.</description></field>
+        <field name="emailNotifications" type="text-indicator"><description>For each User if there is no NotificationTopicUser.emailNotifications value then use this as the default, this defaults to N.</description></field>
         <field name="emailTemplateId" type="id"><description>If is specified use this template to send a notification email to each user with emailNotifications=Y</description></field>
         <field name="emailMessageSave" type="text-indicator"/>
         <relationship type="one" related="moqui.basic.email.EmailTemplate"/>

@@ -32,6 +32,7 @@ import org.moqui.impl.context.ExecutionContextFactoryImpl
 import org.moqui.impl.context.TransactionFacadeImpl
 import org.moqui.impl.entity.EntityJavaUtil.RelationshipInfo
 import org.moqui.util.CollectionUtilities
+import org.moqui.util.LiteStringMap
 import org.moqui.util.MNode
 import org.moqui.util.ObjectUtilities
 import org.moqui.util.StringUtilities
@@ -901,6 +902,15 @@ class EntityFacadeImpl implements EntityFacade {
         int numFiles = 0
         HashMap<String, EntityEcaRule> ruleByIdMap = new HashMap<>()
         LinkedList<EntityEcaRule> ruleNoIdList = new LinkedList<>()
+
+        List<ResourceReference> allEntityFileLocations = getAllEntityFileLocations()
+        for (ResourceReference rr in allEntityFileLocations) {
+            if (!rr.fileName.endsWith(".eecas.xml")) continue
+            numLoaded += loadEecaRulesFile(rr, ruleByIdMap, ruleNoIdList)
+            numFiles++
+        }
+
+        /*
         // search for the service def XML file in the components
         for (String location in this.ecfi.getComponentBaseLocations().values()) {
             ResourceReference entityDirRr = this.ecfi.resourceFacade.getLocationReference(location + "/entity")
@@ -911,12 +921,13 @@ class EntityFacadeImpl implements EntityFacade {
                     if (!rr.fileName.endsWith(".eecas.xml")) continue
                     numLoaded += loadEecaRulesFile(rr, ruleByIdMap, ruleNoIdList)
                     numFiles++
-
                 }
             } else {
                 logger.warn("Can't load EECA rules from component at [${entityDirRr.location}] because it doesn't support exists/directory/etc")
             }
         }
+        */
+
         if (logger.infoEnabled) logger.info("Loaded ${numLoaded} Entity ECA rules from ${numFiles} .eecas.xml files, ${ruleNoIdList.size()} rules have no id, ${ruleNoIdList.size() + ruleByIdMap.size()} EECA rules active")
 
         HashMap<String, ArrayList<EntityEcaRule>> ruleMap = new HashMap<>()
@@ -1561,7 +1572,7 @@ class EntityFacadeImpl implements EntityFacade {
 
             if (rs.next()) {
                 newEntityValue = new EntityValueImpl(ed, this)
-                HashMap<String, Object> valueMap = newEntityValue.getValueMap()
+                LiteStringMap valueMap = newEntityValue.getValueMap()
                 int size = fieldInfoArray.length;
                 for (int i = 0; i < size; i++) {
                     FieldInfo fi = fieldInfoArray[i];
