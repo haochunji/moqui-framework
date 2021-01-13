@@ -1658,13 +1658,13 @@ class ScreenForm {
             return null
         }
         EntityValue getActiveFormListFind(ExecutionContextImpl ec) {
-            if (ec.web == null) return null
-            String formListFindId = ec.web.requestParameters.get("formListFindId")
-            if (!formListFindId) return null
+            String formListFindId = (String) ec.contextStack.get("formListFindId")
+            if (formListFindId == null || formListFindId.isEmpty()) return null
+
             EntityValue formListFind = ec.entityFacade.fastFindOne("moqui.screen.form.FormListFind", true, false, formListFindId)
             // see if this applies to this form-list, may be multiple on the screen
             String fullLocation = screenForm.getSavedFindFullLocation()
-            if (formListFind != null && fullLocation != formListFind.getNoCheckSimple("formLocation")) formListFind = null
+            if (formListFind != null && fullLocation != formListFind.get("formLocation")) formListFind = null
             return formListFind
         }
 
@@ -1882,6 +1882,7 @@ class ScreenForm {
             this.formInstance = formInstance
             screenForm = formInstance.screenForm
             ecfi = formInstance.ecfi
+
             // NOTE: this can be different for each form rendering depending on user settings
             allColInfo = formInstance.getFormListColumnInfo()
             if (formInstance.hasFieldHideAttrs) {
@@ -1951,8 +1952,8 @@ class ScreenForm {
         boolean hasFirstRow() { return formInstance.hasFirstRow }
         boolean hasSecondRow() { return formInstance.hasSecondRow }
         boolean hasLastRow() { return formInstance.hasLastRow }
-        String getFormLocation() { return formInstance.screenForm.location }
-        String getSavedFindFullLocation() { return formInstance.screenForm.getSavedFindFullLocation() }
+        String getFormLocation() { return screenForm.location }
+        String getSavedFindFullLocation() { return screenForm.getSavedFindFullLocation() }
 
         FormInstance getFormInstance() { return formInstance }
         ScreenForm getScreenForm() { return screenForm }
@@ -2099,6 +2100,15 @@ class ScreenForm {
             CollectionUtilities.orderMapList(flfInfoList, ["description"])
 
             return flfInfoList
+        }
+        String getUserDefaultFormListFindId(ExecutionContextImpl ec) {
+            String userId = ec.user.userId
+            if (userId == null) return null
+            EntityValue formListFindUserDefault = ec.entityFacade.find("moqui.screen.form.FormListFindUserDefault")
+                    .condition("userId", userId).condition("screenLocation", screenForm?.sd?.location)
+                    .disableAuthz().useCache(true).one()
+            if (formListFindUserDefault == null) return null
+            return formListFindUserDefault.get("formListFindId")
         }
         String getOrderByActualJsString(String originalOrderBy) {
             if (originalOrderBy == null || originalOrderBy.length() == 0) return "";
@@ -2321,6 +2331,10 @@ class ScreenForm {
         if (cs.containsKey("DeleteFind")) {
             if (flf == null) { ec.messageFacade.addError("Saved find with ID ${formListFindId} not found, not deleting"); return null }
 
+            // delete FormListFindUserDefault that reference this formListFindId for this user
+            ec.entity.find("moqui.screen.form.FormListFindUserDefault").condition("userId", userId)
+                    .condition("formListFindId", formListFindId).deleteAll()
+
             // delete FormListFindUser record; if there are no other FormListFindUser records or FormListFindUserGroup
             //     records, delete the FormListFind
             EntityValue flfu = ec.entity.find("moqui.screen.form.FormListFindUser").condition("userId", userId)
@@ -2367,6 +2381,12 @@ class ScreenForm {
             return formListFindId
         }
 
+        if (cs.containsKey("ClearDefault")) {
+            ec.entity.find("moqui.screen.form.FormListFindUserDefault").condition("userId", userId)
+                    .condition("formListFindId", formListFindId).deleteAll()
+            return null
+        }
+
         String formLocation = cs.getByString("formLocation")
         if (!formLocation) { ec.message.addError("No form location specified, cannot process saved find"); return null; }
 
@@ -2393,6 +2413,25 @@ class ScreenForm {
 
         ScreenDefinition screenDef = ec.screenFacade.getScreenDefinition(screenLocation)
         if (screenDef == null) { ec.message.addError("Screen not found at ${screenLocation}, cannot process saved find"); return null; }
+
+        // MakeDefault needs the screenLocation, do here just after validated
+        if (cs.containsKey("MakeDefault")) {
+            if (flf == null) { ec.messageFacade.addError("Saved find with ID ${formListFindId} not found, not making default"); return null }
+            // FUTURE: consider some sort of check to make sure associated with user or a group user is in? is it a big deal?
+
+            EntityValue curUserDefault = ec.entityFacade.find("moqui.screen.form.FormListFindUserDefault")
+                    .condition("userId", userId).condition("screenLocation", screenLocation).one()
+            if (curUserDefault == null) {
+                ec.entityFacade.makeValue("moqui.screen.form.FormListFindUserDefault").set("userId", userId)
+                        .set("screenLocation", screenLocation).set("formListFindId", formListFindId).create()
+            } else {
+                curUserDefault.set("formListFindId", formListFindId)
+                curUserDefault.update()
+            }
+
+            return null
+        }
+
         ScreenForm screenForm = screenDef.getForm(formName)
         if (screenForm == null) { ec.message.addError("Form ${formName} not found in screen at ${screenLocation}, cannot process saved find"); return null; }
         FormInstance formInstance = screenForm.getFormInstance()
