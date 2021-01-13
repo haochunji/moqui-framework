@@ -168,8 +168,8 @@ dependencies {
     compile 'org.yaml:snakeyaml:1.26' // Apache 2.0
 
     // Apache Jackrabbit - uncomment here or include elsewhere when Jackrabbit repository configurations are used
-    // compile 'org.apache.jackrabbit:jackrabbit-jcr-rmi:2.12.1' // Apache 2.0
-    // compile 'org.apache.jackrabbit:jackrabbit-jcr2dav:2.12.1' // Apache 2.0
+    compile 'org.apache.jackrabbit:jackrabbit-jcr-rmi:2.21.4' // Apache 2.0
+    compile 'org.apache.jackrabbit:jackrabbit-jcr2dav:2.21.4' // Apache 2.0
 
     // Apache Commons JCS - Only needed when using JCSCacheToolFactory
     // compile 'org.apache.commons:commons-jcs-jcache:2.0-beta-1' // Apache 2.0

@@ -71,7 +71,7 @@
         <!-- H2 Database ToolFactory - if h2 database active runs the H2 server for external access (local only depending on conf) -->
         <tool-factory class="org.moqui.impl.tools.H2ServerToolFactory" init-priority="12" disabled="false"/>
         <!-- Jackrabbit ToolFactory for running Jackrabbit if plugged in -->
-        <tool-factory class="org.moqui.impl.tools.JackrabbitRunToolFactory" init-priority="40" disabled="true"/>
+        <tool-factory class="org.moqui.impl.tools.JackrabbitRunToolFactory" init-priority="40" disabled="false"/>
         <!-- SubEtha SMTP ToolFactory starts an SMTP server using the MOQUI_LOCAL EmailServer settings, emails received trigger EMECA rules -->
         <tool-factory class="org.moqui.impl.tools.SubEthaSmtpToolFactory" init-priority="50" disabled="true"/>
     </tools>
@@ -825,12 +825,12 @@
 
     <repository-list>
         <!-- No JCR repo by default, but here are some examples: -->
-        <!-- requires 'org.apache.jackrabbit:jackrabbit-jcr-rmi' in the classpath:
+        <!-- requires 'org.apache.jackrabbit:jackrabbit-jcr-rmi' in the classpath:-->
         <repository name="main" workspace="default" username="admin" password="admin">
-            <init-param name="org.apache.jackrabbit.repository.uri" value="http://localhost:8081/rmi"/></repository> -->
-        <!-- requires 'org.apache.jackrabbit:jackrabbit-jcr2dav' in the classpath:
+            <init-param name="org.apache.jackrabbit.repository.uri" value="http://localhost:8081/rmi"/></repository>
+        <!-- requires 'org.apache.jackrabbit:jackrabbit-jcr2dav' in the classpath:-->
         <repository name="main" workspace="default" username="admin" password="admin">
-            <init-param name="org.apache.jackrabbit.spi2davex.uri" value="http://localhost:8081/server"/></repository> -->
+            <init-param name="org.apache.jackrabbit.spi2davex.uri" value="http://localhost:8081/server"/></repository>
     </repository-list>
 
     <component-list>

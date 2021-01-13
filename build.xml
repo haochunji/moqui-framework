@@ -62,8 +62,10 @@ The actual build is done with Gradle.
     <target name="run" description="Run Moqui Web server in dev/default mode with Embedded Winstone (run the executable war file)">
         <delete verbose="off" failonerror="false" dir="execwartmp"/>
         <java jar="moqui.war" fork="true">
-            <jvmarg value="-server"/>
+            <jvmarg value="-XX:+UseG1GC"/>
             <jvmarg value="-Xmx256M"/>
+            <jvmarg value="-XX:+UnlockExperimentalVMOptions"/>
+            <jvmarg value="-XX:+UseStringDeduplication"/>
             <jvmarg value="-Dmoqui.conf=${moqui.conf.dev}"/>
             <jvmarg value="-Dmoqui.runtime=${moqui.runtime}"/>
         </java>
@@ -71,17 +73,21 @@ The actual build is done with Gradle.
     <target name="run-production" description="Run Moqui Web server in production mode">
         <delete verbose="off" failonerror="false" dir="execwartmp"/>
         <java jar="moqui.war" fork="true">
-            <jvmarg value="-server"/>
+            <jvmarg value="-XX:+UseG1GC"/>
             <jvmarg value="-Xms512M"/>
             <jvmarg value="-Xmx512M"/>
+            <jvmarg value="-XX:+UnlockExperimentalVMOptions"/>
+            <jvmarg value="-XX:+UseStringDeduplication"/>
             <jvmarg value="-Dmoqui.conf=${moqui.conf.production}"/>
             <jvmarg value="-Dmoqui.runtime=${moqui.runtime}"/>
         </java>
     </target>
     <target name="load" description="Run Moqui data loader (run the executable war file with -load)">
         <java jar="moqui.war" fork="true">
-            <jvmarg value="-server"/>
+            <jvmarg value="-XX:+UseG1GC"/>
             <jvmarg value="-Xmx256M"/>
+            <jvmarg value="-XX:+UnlockExperimentalVMOptions"/>
+            <jvmarg value="-XX:+UseStringDeduplication"/>
             <jvmarg value="-Dmoqui.conf=${moqui.conf.dev}"/>
             <jvmarg value="-Dmoqui.runtime=${moqui.runtime}"/>
             <arg value="-load"/>
@@ -89,8 +95,10 @@ The actual build is done with Gradle.
     </target>
     <target name="load-production" description="Run Moqui data loader in production mode">
         <java jar="moqui.war" fork="true">
-            <jvmarg value="-server"/>
+            <jvmarg value="-XX:+UseG1GC"/>
             <jvmarg value="-Xmx256M"/>
+            <jvmarg value="-XX:+UnlockExperimentalVMOptions"/>
+            <jvmarg value="-XX:+UseStringDeduplication"/>
             <jvmarg value="-Dmoqui.conf=${moqui.conf.production}"/>
             <jvmarg value="-Dmoqui.runtime=${moqui.runtime}"/>
             <arg value="-load"/>
