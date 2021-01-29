@@ -316,6 +316,7 @@ public class ContextJavaUtil {
         public final long moquiTxId = moquiTxIdLast.incrementAndGet();
         public Exception transactionBegin = null;
         public Long transactionBeginStartTime = null;
+        public int transactionTimeout = 60;
         public RollbackInfo rollbackOnlyInfo = null;
 
         public Transaction suspendedTx = null;
@@ -337,6 +338,7 @@ public class ContextJavaUtil {
             rollbackOnlyInfo = null;
             transactionBegin = null;
             transactionBeginStartTime = null;
+            transactionTimeout = 60;
             activeXaResourceMap.clear();
             activeSynchronizationMap.clear();
             txCache = null;
@@ -409,7 +411,7 @@ public class ContextJavaUtil {
                 if (curErlList.size() > 0) {
                     StringBuilder msgBuilder = new StringBuilder().append("Potential lock conflict entity ").append(entityName)
                             .append(" pk ").append(pkString).append(" thread ").append(threadName)
-                            .append(" moqui tx ").append(moquiTxId).append(" began ").append(new Timestamp(txBeginTime));
+                            .append(" TX ").append(moquiTxId).append(" began ").append(new Timestamp(txBeginTime));
                     if (mutateEntityName != null) msgBuilder.append(" from mutate of entity ").append(mutateEntityName).append(" pk ").append(mutatePkString);
                     msgBuilder.append(" at: ");
                     if (artifactStack != null) for (int mi = 0; mi < artifactStack.size(); mi++) {
@@ -419,7 +421,7 @@ public class ContextJavaUtil {
                     for (int i = 0; i < curErlList.size(); i++) {
                         EntityRecordLock otherErl = curErlList.get(i);
                         msgBuilder.append("\n== OTHER LOCK ").append(i).append(" thread ").append(otherErl.threadName)
-                                .append(" moqui tx ").append(otherErl.moquiTxId).append(" began ").append(new Timestamp(otherErl.txBeginTime)).append(" at: ");
+                                .append(" TX ").append(otherErl.moquiTxId).append(" began ").append(new Timestamp(otherErl.txBeginTime)).append(" at: ");
                         if (otherErl.artifactStack != null) for (int mi = 0; mi < otherErl.artifactStack.size(); mi++) {
                             msgBuilder.append("\n").append(StringGroovyMethods.padLeft((CharSequence) Integer.toString(mi), 2, "0"))
                                     .append(": ").append(otherErl.artifactStack.get(mi).toBasicString());
