@@ -108,7 +108,7 @@ public class CacheFacadeImpl implements CacheFacade {
 
     @Override
     MCache getLocalCache(String cacheName) {
-        return getCacheInternal(cacheName, "local").unwrap(MCache.class)
+        return getCacheInternal(cacheName, "local").unwrap(MCache.class) as MCache
     }
     @Override
     Cache getDistributedCache(String cacheName) {
@@ -161,7 +161,7 @@ public class CacheFacadeImpl implements CacheFacade {
             } else
             */
             if (co instanceof MCache) {
-                MCache mc = co.unwrap(MCache.class)
+                MCache mc = co.unwrap(MCache.class) as MCache
                 MStats stats = mc.getMStats()
                 Long expireIdle = mc.getAccessDuration()?.durationAmount ?: 0
                 Long expireLive = mc.getCreationDuration()?.durationAmount ?: 0
@@ -299,7 +299,7 @@ public class CacheFacadeImpl implements CacheFacade {
     List<Map> makeElementInfoList(String cacheName, String orderByField) {
         Cache cache = getCache(cacheName)
         if (cache instanceof MCache) {
-            MCache mCache = cache.unwrap(MCache.class)
+            MCache mCache = cache.unwrap(MCache.class) as MCache
             List<Map> elementInfoList = new ArrayList<>();
             for (Cache.Entry ce in mCache.getEntryList()) {
                 MEntry entry = ce.unwrap(MEntry.class)
