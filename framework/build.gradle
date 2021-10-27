@@ -84,7 +84,8 @@ dependencies {
     // ========== Local (flatDir) libraries in framework/lib ==========
 
     // Bitronix Transaction Manager (the default internal tx mgr; custom build from source as 3.0.0 not yet released)
-    compile 'org.codehaus.btm:btm:3.0.0-SNAPSHOT' // Apache 2.0
+//    compile 'org.codehaus.btm:btm:3.0.0-SNAPSHOT' // Apache 2.0
+    compile 'org.codehaus.btm:btm:2.1.4' // Apache 2.0
     runtime 'org.javassist:javassist:3.28.0-GA' // Apache 2.0
 
     // ========== Libraries from jcenter ==========
