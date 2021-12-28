@@ -14,15 +14,17 @@
 
 buildscript {
     repositories {
-//        jcenter()
-//        mavenCentral()
-
-//        maven { url "https://plugins.gradle.org/m2/" }
+        mavenCentral()
+        maven { url "https://plugins.gradle.org/m2/" }
         maven { url 'http://maven.aliyun.com/nexus/content/groups/public/'}
     }
     dependencies { classpath 'org.ajoberstar:grgit:2.2.1' }
 }
 // Not needed for explicit use, causes problems when not from git repo: plugins { id 'org.ajoberstar.grgit' version 'x.y.z' }
+
+// Run headless so GradleWorkerMain does not steal focus (mostly a macOS annoyance)
+allprojects { tasks.withType(JavaForkOptions) { jvmArgs '-Djava.awt.headless=true' } }
+
 import org.ajoberstar.grgit.*
 
 apply plugin:'idea'
