@@ -27,11 +27,9 @@ allprojects { tasks.withType(JavaForkOptions) { jvmArgs '-Djava.awt.headless=tru
 
 import org.ajoberstar.grgit.*
 
-apply plugin:'idea'
-
 defaultTasks 'build'
 
-def elasticSearchVersion = '7.4.2'
+def elasticSearchVersion = '7.10.2'
 def tomcatHome = '../apache-tomcat'
 // no longer include version in war file name: def getWarName() { 'moqui-' + childProjects.framework.version + '.war' }
 def getWarName() { 'moqui.war' }
@@ -150,32 +148,44 @@ task downloadElasticSearch { doLast {
 
     delete zipFile
 }}
-/*
+/* startElasticSearch old approach, with ES 7.10.2 never exits (though same command in terminal does) */
 task startElasticSearch(type:Exec) {
-    workingDir moquiRuntime + '/elasticsearch'; commandLine './bin/elasticsearch', '-d', '-p', 'pid'
+    workingDir moquiRuntime + '/elasticsearch'
+    commandLine './bin/elasticsearch', '-d', '-p', 'pid'
+    ignoreExitValue true
     onlyIf { file(moquiRuntime + '/elasticsearch/bin').exists() && !file(moquiRuntime + '/elasticsearch/pid').exists() }
     doFirst { logger.lifecycle("Starting ElasticSearch installed in runtime/elasticsearch") }
 }
-*/
+/* startElasticSearch new approach with ProcessBuilder, note that does nothing on macOS with Azul OpenJDK 11
 task startElasticSearch { doLast {
-    if (file(moquiRuntime + '/elasticsearch/bin').exists() && !file(moquiRuntime + '/elasticsearch/pid').exists()) {
+    def pidFile = file(moquiRuntime + '/elasticsearch/pid')
+    def esBinFile = file(moquiRuntime + '/elasticsearch/bin')
+    if (esBinFile.exists() && !pidFile.exists()) {
         logger.lifecycle("Starting ElasticSearch installed in runtime/elasticsearch")
         ProcessBuilder pb = new ProcessBuilder('./bin/elasticsearch', '-d', '-p', 'pid')
         pb.directory(file(moquiRuntime + '/elasticsearch'))
         pb.redirectOutput()
         pb.redirectError()
         pb.start()
+    } else {
+        if (pidFile.exists()) logger.lifecycle("Not Starting ElasticSearch installed in runtime/elasticsearch, pid file already exists")
+        if (!esBinFile.exists()) logger.lifecycle("Not Starting ElasticSearch, no runtime/elasticsearch/bin directory found")
     }
 } }
+*/
 task stopElasticSearch { doLast {
     String esDir = moquiRuntime + '/elasticsearch'
     def pidFile = file(moquiRuntime + '/elasticsearch/pid')
-    if (pidFile.exists() && file(moquiRuntime + '/elasticsearch/bin').exists()) {
+    def esBinFile = file(moquiRuntime + '/elasticsearch/bin')
+    if (pidFile.exists() && esBinFile.exists()) {
         String pid = pidFile.getText()
         logger.lifecycle("Stopping ElasticSearch installed in runtime/elasticsearch with pid ${pid}")
         exec { workingDir esDir; commandLine 'kill', pid }
         // don't bother waiting in this case: exec { workingDir esDir; commandLine 'tail', "--pid=${pid}", '-f', '/dev/null' }
         if (pidFile.exists()) delete pidFile
+    } else {
+        if (!pidFile.exists()) logger.lifecycle("Not Stopping ElasticSearch installed in runtime/elasticsearch, no pid file found")
+        if (!esBinFile.exists()) logger.lifecycle("Not Stopping ElasticSearch, no runtime/elasticsearch/bin directory found")
     }
 } }
 
@@ -674,8 +684,16 @@ task plusRuntimeWarTemp {
         copy { from fileTree(dir: moquiRuntime+'/classes', include: '**/*') into 'wartemp/WEB-INF/classes' }
         // copy the jar files from components
         copy { from fileTree(dir: moquiRuntime+'/base-component', include: '**/*.jar').files into 'wartemp/WEB-INF/lib' }
-        copy { from fileTree(dir: moquiRuntime+'/component', include: '**/*.jar').files into 'wartemp/WEB-INF/lib' }
-        copy { from fileTree(dir: moquiRuntime+'/ecomponent', include: '**/*.jar').files into 'wartemp/WEB-INF/lib' }
+        copy {
+            from fileTree(dir: moquiRuntime+'/component', include: '**/*.jar', exclude: '**/librepo/*.jar').files
+            into 'wartemp/WEB-INF/lib'
+            duplicatesStrategy DuplicatesStrategy.WARN
+        }
+        copy {
+            from fileTree(dir: moquiRuntime+'/ecomponent', include: '**/*.jar', exclude: '**/librepo/*.jar').files
+            into 'wartemp/WEB-INF/lib'
+            duplicatesStrategy DuplicatesStrategy.WARN
+        }
         // add MoquiInit.properties fresh copy, just in case it was changed
         copy { from file('MoquiInit.properties') into 'wartemp/WEB-INF/classes' }
         // add Procfile to root
